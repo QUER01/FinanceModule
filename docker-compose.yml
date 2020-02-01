@@ -1,0 +1,9 @@
+version: '2'
+
+services:
+    finance-service:
+      build: ./app
+      volumes:
+       - ./app:/usr/src/app
+      ports:
+      - 8050:8050
