@@ -56,10 +56,14 @@ print('-'* 50)
 history_points = 150
 test_split = 0.9
 n_forecast = 10
-n_tickers = 60
+n_tickers = 100
 n_days = 250*4
-sectors = ['TECHNOLOGY' , 'ENERGY', 'CONSUMER NON-DURABLES', 'HEALTH CARE']
+sectors = ['FINANCE', 'CONSUMER SERVICES', 'TECHNOLOGY',
+       'CAPITAL GOODS', 'BASIC INDUSTRIES', 'HEALTH CARE',
+       'CONSUMER DURABLES', 'ENERGY','TRANSPORTATION', 'CONSUMER NON-DURABLES']
 backtest_days = 100
+scaled_mse_arr = []
+plot_reults = True
 
 
 #loading data
@@ -90,8 +94,9 @@ l_tickers_unique = np.unique(column(l_tickers_new,0))
 
 df_all = df
 
+
 for d in range(int(backtest_days/n_forecast)+1)[::-1] :
-    if d != 0:
+    if d != 0 :
         print('-' * 5 + 'Backtest Iteration ' + str(d))
         df = df_all.head(len(df_all) - n_forecast*d)
 
@@ -144,7 +149,7 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
                 real_mse = np.mean(np.square(unscaled_y_test - y_test_predicted))
                 scaled_mse = real_mse / (np.max(unscaled_y_test) - np.min(unscaled_y_test)) * 100
                 print('-' * 25 + 'Scaled MSE: ' + str(scaled_mse) )
-            
+                scaled_mse_arr.append([column, d scaled_mse])
             
             
                 # plot the results
@@ -214,7 +219,7 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
 
                     # initialize the result dataset
                 # We need to initialize these values here because they depend on the firsts computations
-                if i == 0:
+                if 'df_result' not in locals():
                     print('-' * 20 + 'Iteration: ' + str(i) + '   Initialize the result dataset')
                     df_result = pd.DataFrame(index=df_filtered.index)
 
@@ -227,22 +232,23 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
                 # add model prediction to the dataset
                 df_result = df_result.join(df_predicted)
 
-                print('-' * 15 + ' Plot the results of the ' + str(n_forecast) + '-Step-Forward Prediction ')
-                plt.figure(figsize=(20, 5))
-                plt.plot(df_filtered.index, df_filtered[df_filtered.columns[0]])
-                plt.plot(df_filtered.index, df_filtered[df_filtered.columns[1]])
-                plt.plot(df_filtered.index, df_filtered[df_filtered.columns[2]])
-                plt.plot(df_filtered.index, df_filtered[df_filtered.columns[3]])
-                plt.plot(df_predicted.index, df_predicted[df_predicted.columns[0]])
+                if plot_reults:
+                    print('-' * 15 + ' Plot the results of the ' + str(n_forecast) + '-Step-Forward Prediction ')
+                    plt.figure(figsize=(20, 5))
+                    plt.plot(df_filtered.index, df_filtered[df_filtered.columns[0]])
+                    plt.plot(df_filtered.index, df_filtered[df_filtered.columns[1]])
+                    plt.plot(df_filtered.index, df_filtered[df_filtered.columns[2]])
+                    plt.plot(df_filtered.index, df_filtered[df_filtered.columns[3]])
+                    plt.plot(df_predicted.index, df_predicted[df_predicted.columns[0]])
 
-                # plt.plot(df_filtered.index, df_filtered['Prediction_Future'], color='r')
-                # plt.plot(df_proj.index, df_proj['Prediction'], color='y')
-                plt.legend(
-                    [df_filtered.columns[0], df_filtered.columns[1], df_filtered.columns[2], df_filtered.columns[3],
-                     df_predicted.columns[0]])
-                plt.xticks(fontsize=18)
-                plt.yticks(fontsize=16)
-                plt.show()
+                    # plt.plot(df_filtered.index, df_filtered['Prediction_Future'], color='r')
+                    # plt.plot(df_proj.index, df_proj['Prediction'], color='y')
+                    plt.legend(
+                        [df_filtered.columns[0], df_filtered.columns[1], df_filtered.columns[2], df_filtered.columns[3],
+                         df_predicted.columns[0]])
+                    plt.xticks(fontsize=18)
+                    plt.yticks(fontsize=16)
+                    plt.show()
 
                 plt.savefig('img/' + column + '.png')
 
@@ -271,10 +277,16 @@ tickers_option_2 = []
 profits_option_3 = []
 tickers_option_3 = []
 
+
+avg_return_column = 'avg_returns_last50_days'
+avg_return_days = 10
+
+n_stocks_per_bin = 2
+budget = 1000
+n_bins = 4
 for d in range(int(backtest_days/n_forecast)+1)[::-1] :
 
-    #if d !0 0:
-    if d > 6:
+    if d != 0:
         print('-' * 5 + 'Backtest Iteration ' + str(d))
 
         df_result = pd.read_csv('data/df_result_' + str(d) + '.csv', sep=';', index_col='Unnamed: 0')
@@ -323,7 +335,8 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
         print('-' * 25 + 'Calculate L2 norm as reconstruction loss metric')
         df_returns_l2norm = getReconstructionErrorsAndReturns(  original_data = df_pct_change
                                                               , reconstructed_data = reconstruct_real
-                                                              , original_data_abs = original_data  )
+                                                              , original_data_abs = original_data
+                                                                , avg_return_days=avg_return_days  )
 
 
 
@@ -361,45 +374,46 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
         print('-' * 25 + 'Calculate L2 norm as similarity metric')
         df_returns_similarity = getLatentFeaturesSimilariryAndReturns( original_data= df_pct_change
                                                                       ,latent_features = latent_features
-                                                                      ,original_data_abs = original_data)
+                                                                      ,original_data_abs = original_data
+                                                                      , avg_return_days = avg_return_days)
+
+        if plot_reults:
+            print('-' * 25 + 'Plot the results')
+            top_n = 5
+            df_returns_similarity_top_n = df_returns_similarity.iloc[0:top_n,:]
+            df_returns_l2norm_top_n = df_returns_l2norm.iloc[0:top_n,:]
+
+            bottom_n = 5
+            df_returns_similarity_bottom_n = df_returns_similarity.tail(bottom_n)
+            df_returns_l2norm_bottom_n = df_returns_l2norm.tail(bottom_n)
 
 
-        print('-' * 25 + 'Plot the results')
-        top_n = 5
-        df_returns_similarity_top_n = df_returns_similarity.iloc[0:top_n,:]
-        df_returns_l2norm_top_n = df_returns_l2norm.iloc[0:top_n,:]
+            print('-' * 30 + 'Plot top 5 most similar time series')
+            df_plot = df_returns_similarity_top_n
+            plt.figure(figsize=(11, 6))
+            for stock in df_plot['stock_name']:
+                plt.plot(df_result.index, df_result.filter(like=stock).filter(like='Close'), label= stock)
 
-        bottom_n = 5
-        df_returns_similarity_bottom_n = df_returns_similarity.tail(bottom_n)
-        df_returns_l2norm_bottom_n = df_returns_l2norm.tail(bottom_n)
-
-
-        print('-' * 30 + 'Plot top 5 most similar time series')
-        df_plot = df_returns_similarity_top_n
-        plt.figure(figsize=(11, 6))
-        for stock in df_plot['stock_name']:
-            plt.plot(df_result.index, df_result.filter(like=stock).filter(like='Close'), label= stock)
-
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        plt.title('Top ' + str(top_n) + ' most similar stocks based on latent feature value')
-        plt.xlabel("Dates")
-        plt.ylabel("Stock Value")
-        plt.show()
+            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            plt.title('Top ' + str(top_n) + ' most similar stocks based on latent feature value')
+            plt.xlabel("Dates")
+            plt.ylabel("Stock Value")
+            plt.show()
 
 
 
 
-        print('-' * 30 + 'Plot the 5 least similar time series')
-        df_plot = df_returns_similarity_bottom_n
-        plt.figure(figsize=(11, 6))
-        for stock in df_plot['stock_name']:
-            plt.plot(df_result.index, df_result.filter(like=stock).filter(like='Close'), label= stock)
+            print('-' * 30 + 'Plot the 5 least similar time series')
+            df_plot = df_returns_similarity_bottom_n
+            plt.figure(figsize=(11, 6))
+            for stock in df_plot['stock_name']:
+                plt.plot(df_result.index, df_result.filter(like=stock).filter(like='Close'), label= stock)
 
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        plt.title('Bottom ' + str(top_n) + ' most similar stocks based on latent feature value')
-        plt.xlabel("Dates")
-        plt.ylabel("Stock Value")
-        plt.show()
+            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            plt.title('Bottom ' + str(top_n) + ' most similar stocks based on latent feature value')
+            plt.xlabel("Dates")
+            plt.ylabel("Stock Value")
+            plt.show()
 
 
         print('-' * 20 + 'Step 3: Create Portfolio ')
@@ -422,74 +436,72 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
 
 
         # remove very high values
-
         df_portfolio = df_portfolio[df_portfolio['L2norm']< df_portfolio['L2norm'].quantile(0.99)]
 
         # calculate bins
-        df_portfolio['latent_value_quartile'] = pd.qcut(df_portfolio.latent_value, 4, precision=0)
+        df_portfolio['latent_value_quartile'] = pd.qcut(df_portfolio.latent_value, n_bins, precision=0)
 
         # calculate return*recreation error
         df_scaler_recreation_error = preprocessing.MinMaxScaler()
         df_portfolio['recreation_error_scaled_inverse'] = 1 - df_scaler_recreation_error.fit_transform(df_portfolio[['L2norm']].values)
-        df_portfolio['avg_return_recreation_error'] = df_portfolio['avg_returns_last10_days'] * df_portfolio['recreation_error_scaled_inverse']
+        df_portfolio['avg_return_recreation_error'] = df_portfolio[avg_return_column] * df_portfolio['recreation_error_scaled_inverse']
 
-        # plot the results
-        print('-' * 25 + 'Plot the results')
-        df_plot =df_portfolio[df_portfolio.avg_returns_last10_days > 0]
-        df_plot = df_plot[df_plot['latent_value']< df_plot['latent_value'].quantile(0.99)]
-        groups = df_plot.groupby('sector')
+        if plot_reults:
+            # plot the results
+            print('-' * 25 + 'Plot the results')
+            df_plot =df_portfolio[df_portfolio[avg_return_column] > 0]
+            df_plot = df_plot[df_plot['latent_value']< df_plot['latent_value'].quantile(0.99)]
+            groups = df_plot.groupby('sector')
 
-        # Plot
-        fig, ax = plt.subplots(figsize=(10, 6))
-        for name, group in groups:
-            ax.plot(group.latent_value, group.avg_returns_last10_days, marker='o', linestyle='', ms=12, label=name)
+            # Plot
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for name, group in groups:
+                ax.plot(group.latent_value, group[avg_return_column]*100, marker='o', linestyle='', ms=12, label=name)
 
-        plt.title('Average retuns vs. similarity metric (latent feature values)')
-        plt.xlabel("Latent Feature Value")
-        plt.ylabel("avg_returns_last10_days")
-        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        plt.show()
-
-
-
-
-        print('-' * 25 + 'Plot results')
-        df_plot = df_portfolio[df_portfolio['avg_returns_last10_days'] > 0]
-        df_plot = df_plot[df_plot['L2norm']< df_plot['L2norm'].quantile(0.99)]
-        groups = df_plot.groupby('sector')
-
-        # Plot
-        fig, ax = plt.subplots(figsize=(10, 6))
-        for name, group in groups:
-            ax.plot(group.L2norm, group.avg_returns_last10_days*100, marker='o', linestyle='', ms=12, label=name)
-
-        plt.title('Average return vs. recreation error')
-        plt.xlabel("Recreation error")
-        plt.ylabel("average returns last 10 days in %")
-        ax.legend(loc='best')
-        plt.show()
+            plt.title('Average retuns vs. similarity metric (latent feature values)')
+            plt.xlabel("Latent Feature Value")
+            plt.ylabel(avg_return_column)
+            ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            plt.show()
 
 
 
 
-        df_plot = df_portfolio[df_portfolio['avg_returns_last10_days'] > 0]
+            print('-' * 25 + 'Plot results')
+            df_plot = df_portfolio[df_portfolio[avg_return_column] > 0]
+            df_plot = df_plot[df_plot['L2norm']< df_plot['L2norm'].quantile(0.99)]
+            groups = df_plot.groupby('sector')
 
-        df_plot = df_plot[df_plot['avg_returns_last10_days']< df_plot['avg_returns_last10_days'].quantile(0.9)]
-        df_plot = df_plot[df_plot['L2norm']< df_plot['L2norm'].quantile(0.9)]
-        groups = df_plot.groupby('latent_value_quartile')
+            # Plot
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for name, group in groups:
+                ax.plot(group.L2norm, group[avg_return_column]*100, marker='o', linestyle='', ms=12, label=name)
 
-        # Plot
-        fig, ax = plt.subplots(figsize=(10, 6))
-        for name, group in groups:
-            ax.plot(group.L2norm, group.avg_returns_last10_days*100, marker='o', linestyle='', ms=12, label=name)
-
-        plt.title('Average return vs. recreation error by similarity quartiles (colors)')
-        plt.xlabel("Recreation error")
-        plt.ylabel("Average returns last 10 days in %")
-        ax.legend(title='Similarity Quartiles', loc='best')
-        plt.show()
+            plt.title('Average return vs. recreation error')
+            plt.xlabel("Recreation error")
+            plt.ylabel("average returns last 10 days in %")
+            ax.legend(loc='best')
+            plt.show()
 
 
+
+
+            df_plot = df_portfolio[df_portfolio[avg_return_column] > 0]
+
+            df_plot = df_plot[df_plot[avg_return_column]< df_plot[avg_return_column].quantile(0.9)]
+            df_plot = df_plot[df_plot['L2norm']< df_plot['L2norm'].quantile(0.9)]
+            groups = df_plot.groupby('latent_value_quartile')
+
+            # Plot
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for name, group in groups:
+                ax.plot(group.L2norm, group[avg_return_column]*100, marker='o', linestyle='', ms=12, label=name)
+
+            plt.title('Average return vs. recreation error by similarity quartiles (colors)')
+            plt.xlabel("Recreation error")
+            plt.ylabel("Average returns last 10 days in %")
+            ax.legend(title='Similarity Quartiles', loc='best')
+            plt.show()
 
 
         """
@@ -513,50 +525,36 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
         3*x2 >= 100
         4*x3 >= 100
         5*x4 >= 100
-        
-        
-         
         """
 
 
-
-
-        # --------------------------------------- OPTION 1 -------------------------------------#
-
-
-        def portfolio_selection(df_portfolio , ranking_colum , profits, tickers, group_by = True):
+        def portfolio_selection(df_portfolio , ranking_colum , profits, tickers,  n_stocks_per_bin, budget ,n_bins,group_by = True):
+            n_stocks_total = n_stocks_per_bin * n_bins
             if group_by == True:
                 df_portfolio['rn'] = df_portfolio.sort_values([ranking_colum], ascending=[False]) \
                                                  .groupby(['latent_value_quartile']) \
                                                  .cumcount() + 1
 
-                df_portfolio_selected_stocks = df_portfolio[df_portfolio['rn'] == 1]
+                df_portfolio_selected_stocks = df_portfolio[df_portfolio['rn'] <= n_stocks_per_bin]
+                print(df_portfolio_selected_stocks.__len__())
             else:
-                df_portfolio['rn'] = df_portfolio[ranking_colum].rank(method='max')
-                df_portfolio_selected_stocks = df_portfolio[df_portfolio['rn'] <= 4]
+                df_portfolio['rn'] = df_portfolio[ranking_colum].rank(method='max', ascending=False)
+                df_portfolio_selected_stocks = df_portfolio[df_portfolio['rn'] <= n_stocks_total]
+                print(df_portfolio_selected_stocks.__len__())
 
-
-            p1 = df_portfolio_selected_stocks['current_price'].iloc[0]
-            p2 = df_portfolio_selected_stocks['current_price'].iloc[1]
-            p3 = df_portfolio_selected_stocks['current_price'].iloc[2]
-            p4 = df_portfolio_selected_stocks['current_price'].iloc[3]
+            var_names = ['x' + str(i) for i in range(n_stocks_total)]
+            x_int = [LpVariable(i, lowBound=0, cat='Integer') for i in var_names]
 
             my_lp_problem = pulp.LpProblem("Portfolio_Selection_LP_Problem", pulp.LpMaximize)
-            x1 = pulp.LpVariable('x1', lowBound=0, cat='Integer')
-            x2 = pulp.LpVariable('x2', lowBound=0, cat='Integer')
-            x3 = pulp.LpVariable('x3', lowBound=0, cat='Integer')
-            x4 = pulp.LpVariable('x4', lowBound=0, cat='Integer')
-
             # Objective function
-            my_lp_problem += p1*x1 + p2*x2 + p3*x3 + p4*x4, "Profit"
-
+            my_lp_problem += lpSum([x_int[i] * df_portfolio_selected_stocks['current_price'].iloc[i] for i in range(n_stocks_total)]) <= budget
             # Constraints
-            my_lp_problem += p1 * x1 >= 100
-            my_lp_problem += p2 * x2 >= 100
-            my_lp_problem += p3 * x3 >= 100
-            my_lp_problem += p4 * x4 >= 100
-            my_lp_problem += p1*x1 + p2*x2 + p3*x3 + p4*x4 <= 1000
+            my_lp_problem += lpSum(
+                [x_int[i] * df_portfolio_selected_stocks['current_price'].iloc[i] for i in range(n_stocks_total)])
 
+            for i in range(n_stocks_total):
+                my_lp_problem += x_int[i] * df_portfolio_selected_stocks['current_price'].iloc[
+                    i] <= budget / n_stocks_total
 
             my_lp_problem.solve()
             pulp.LpStatus[my_lp_problem.status]
@@ -568,48 +566,84 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
                 bought_volume_arr.append(variable.varValue)
 
             df_portfolio_selected_stocks['bought_volume'] = bought_volume_arr
+            print('1')
 
-
-            value_after_10_days_arr = []
+            value_after_x_days_arr = []
             for index in df_portfolio_selected_stocks.index:
-                value_after_10_days = df_result.filter(like=index + '_Close').tail(1).iloc[0,0]
-                value_after_10_days_arr.append(value_after_10_days)
+                value_after_x_days = df_result.filter(like=index + '_Close').tail(1).iloc[0,0]
+                value_after_x_days_arr.append(value_after_x_days)
 
-            df_portfolio_selected_stocks['value_after_10_days'] = value_after_10_days_arr
+            df_portfolio_selected_stocks['value_after_x_days'] = value_after_x_days_arr
 
-            df_portfolio_selected_stocks['delta'] = df_portfolio_selected_stocks['value_after_10_days'] -df_portfolio_selected_stocks['current_price']
+            df_portfolio_selected_stocks['delta'] = df_portfolio_selected_stocks['value_after_x_days'] -df_portfolio_selected_stocks['current_price']
             df_portfolio_selected_stocks['pnl'] = df_portfolio_selected_stocks['delta'] * df_portfolio_selected_stocks['bought_volume']
             print('Profit for iteration ' + str(d) + ': '  + str(df_portfolio_selected_stocks['pnl'].sum()))
 
-            profits.append([d,df_portfolio_selected_stocks['pnl'].sum()])
+            profits = [df_portfolio_selected_stocks['pnl'].sum()]
 
-            tickers.append([d,df_portfolio_selected_stocks.index])
+            return profits , df_portfolio_selected_stocks
 
-            return profits , tickers
 
-        profits_option_1, tickers_option_1 = portfolio_selection(df_portfolio= df_portfolio
-                                               , ranking_colum='avg_returns_last10_days'
+        # merge the reults
+
+
+        profits_option_1, df_portfolio_selected_stocks_option_1 = portfolio_selection(df_portfolio= df_portfolio
+                                               , ranking_colum=avg_return_column
                                                , profits = profits_option_1
-                                               , tickers=tickers_option_1)
+                                               , tickers=tickers_option_1
+                                               , n_stocks_per_bin = n_stocks_per_bin
+                                               , n_bins = n_bins
+                                               , budget = budget)
 
-        profits_option_2, tickers_option_2 = portfolio_selection(df_portfolio= df_portfolio
-                                               , ranking_colum='avg_returns_last10_days'
+        profits_option_2, df_portfolio_selected_stocks_option_2 = portfolio_selection(df_portfolio= df_portfolio
+                                               , ranking_colum=avg_return_column
                                                , profits = profits_option_2
                                                , tickers=tickers_option_2
-                                               , group_by=False)
+                                               , group_by=False
+                                               , n_stocks_per_bin=n_stocks_per_bin
+                                               , n_bins = n_bins
+                                               , budget = budget)
 
-        profits_option_3, tickers_option_3 = portfolio_selection(df_portfolio= df_portfolio
+        profits_option_3, df_portfolio_selected_stocks_option_3 = portfolio_selection(df_portfolio= df_portfolio
                                                , ranking_colum='avg_return_recreation_error'
                                                , profits = profits_option_3
-                                               , tickers=tickers_option_3)
+                                               , tickers=tickers_option_3
+                                               , n_stocks_per_bin=n_stocks_per_bin
+                                               , n_bins = n_bins
+                                               , budget=budget)
 
 
+        print('-' * 25 + 'Merging the portfolio optimization results and compare them')
+        df_portfolio_selected_stocks_option_1['options'] = 'avgerage returns last x days with grouping'
+        df_portfolio_selected_stocks_option_2['options'] = 'average returns last x days'
+        df_portfolio_selected_stocks_option_3['options'] = 'avgerage returns last x days * recreation error with grouping'
 
+        df_portfolio_selected_stocks_option_1['backtest_iteration'] = d
+        df_portfolio_selected_stocks_option_2['backtest_iteration'] = d
+        df_portfolio_selected_stocks_option_3['backtest_iteration'] = d
 
+        df_portfolio_selected_stocks_option_1['total_profit'] = profits_option_1[0]
+        df_portfolio_selected_stocks_option_2['total_profit'] = profits_option_2[0]
+        df_portfolio_selected_stocks_option_3['total_profit'] = profits_option_3[0]
 
+        df_portfolio_selection_results = df_portfolio_selected_stocks_option_1.append(df_portfolio_selected_stocks_option_2).append(df_portfolio_selected_stocks_option_3)
 
+    df_portfolio_selection_results_final = df_portfolio_selection_results_final.append(df_portfolio_selection_results)
+
+print(df_portfolio_selection_results_final.to_string())
 
 """
+if plot_reults:
+    print('-' * 10 + 'Plot results')
+    df_plot = df_portfolio_selection_results_final
+    plt.plot(df_plot.backtest_iteration, df_plot.total_profit, label=df_plot.index)
+    
+    plt.title('Backtest Profits')
+    plt.xlabel("Recreation error")
+    plt.ylabel("average returns last 10 days in %")
+    ax.legend(loc='best')
+    plt.show()
+
 
 
 # --------------------------------------------- #
