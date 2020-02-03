@@ -191,7 +191,7 @@ def predictAutoencoder(autoencoder, data):
 
     return reconstruct
 
-def getReconstructionErrorsAndReturns(original_data, reconstructed_data, original_data_abs):
+def getReconstructionErrorsAndReturns(original_data, reconstructed_data, original_data_abs, forecasting_days):
     array = []
     stocks_ranked = []
     num_columns = reconstructed_data.shape[1]
@@ -210,14 +210,14 @@ def getReconstructionErrorsAndReturns(original_data, reconstructed_data, origina
                               ,np.average(original_data.iloc[-10:, stock_index])
                               ,np.average(original_data.iloc[-50:, stock_index])
                               ,np.average(original_data.iloc[-100:, stock_index])
-                              ,original_data_abs.iloc[-11:, stock_index].head(1).iloc[0]])
+                              ,original_data_abs.iloc[-forecasting_days -1 :, stock_index].head(1).iloc[0]])
         r = r + 1
 
     columns = ['ranking','stock_index', 'L2norm','stock_name','avg_returns','avg_returns_last10_days','avg_returns_last50_days','avg_returns_last100_days', 'current_price']
     df = pd.DataFrame(stocks_ranked, columns=columns)
     return df
 
-def getLatentFeaturesSimilariryAndReturns(original_data, latent_features,original_data_abs):
+def getLatentFeaturesSimilariryAndReturns(original_data, latent_features,original_data_abs, forecasting_days):
     stocks_latent_feature = []
     array = []
     num_columns = latent_features.shape[0]
@@ -236,7 +236,7 @@ def getLatentFeaturesSimilariryAndReturns(original_data, latent_features,origina
                                  , np.average(original_data.iloc[-10:, stock_index])*100
                                  , np.average(original_data.iloc[-50:, stock_index])*100
                                  , np.average(original_data.iloc[-100:, stock_index])*100
-                                 ,original_data_abs.iloc[-11:, stock_index].head(1).iloc[0]])
+                                 ,original_data_abs.iloc[-forecasting_days - 1:, stock_index].head(1).iloc[0]])
         stock_index = stock_index + 1
 
     columns = ['stock_index',

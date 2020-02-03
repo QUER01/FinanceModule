@@ -66,12 +66,6 @@ scaled_mse_arr = []
 plot_reults = True
 
 
-#loading data
-#df = pd.read_csv('data/fse_stocks', sep=';')
-#df.Date = pd.to_datetime(df.Date)
-#df = df.set_index("Date")
-
-
 
 transformDataset( input_path='data/historical_stock_prices.csv', input_sep=','
                  , metadata_input_path = 'data/historical_stocks.csv', metadata_sep = ','
@@ -279,11 +273,16 @@ tickers_option_3 = []
 
 
 avg_return_column = 'avg_returns_last50_days'
-avg_return_days = 10
+avg_return_days = 50
 
-n_stocks_per_bin = 2
+forecasting_days = 10
+
+n_stocks_per_bin = 4
 budget = 1000
-n_bins = 4
+n_bins = 6
+
+
+
 for d in range(int(backtest_days/n_forecast)+1)[::-1] :
 
     if d != 0:
@@ -336,7 +335,7 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
         df_returns_l2norm = getReconstructionErrorsAndReturns(  original_data = df_pct_change
                                                               , reconstructed_data = reconstruct_real
                                                               , original_data_abs = original_data
-                                                                , avg_return_days=avg_return_days  )
+                                                                , forecasting_days=forecasting_days  )
 
 
 
@@ -375,7 +374,7 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
         df_returns_similarity = getLatentFeaturesSimilariryAndReturns( original_data= df_pct_change
                                                                       ,latent_features = latent_features
                                                                       ,original_data_abs = original_data
-                                                                      , avg_return_days = avg_return_days)
+                                                                      , forecasting_days = forecasting_days)
 
         if plot_reults:
             print('-' * 25 + 'Plot the results')
@@ -628,7 +627,10 @@ for d in range(int(backtest_days/n_forecast)+1)[::-1] :
 
         df_portfolio_selection_results = df_portfolio_selected_stocks_option_1.append(df_portfolio_selected_stocks_option_2).append(df_portfolio_selected_stocks_option_3)
 
-    df_portfolio_selection_results_final = df_portfolio_selection_results_final.append(df_portfolio_selection_results)
+    if 'df_portfolio_selection_results_final' not in locals():
+        df_portfolio_selection_results_final = df_portfolio_selection_results
+    else:
+        df_portfolio_selection_results_final = df_portfolio_selection_results_final.append(df_portfolio_selection_results)
 
 print(df_portfolio_selection_results_final.to_string())
 
