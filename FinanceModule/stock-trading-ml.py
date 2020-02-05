@@ -35,7 +35,7 @@ plt.xkcd()
 # --------------------------------------- #
 #             MAIN
 # --------------------------------------- #
-
+"""
 apiKey = "fKx3jVSpXasnsXKGnovb"
 market = 'FSE'
 
@@ -45,7 +45,7 @@ Quandl = Quandl(apiKey)
 df_tickers = Quandl.getStockExchangeCodes()
 # filter data API codes
 l_tickers = df_tickers['code'].tolist()
-
+"""
 
 print('-'* 50)
 print('PART I: Timeseries Cleaning' )
@@ -89,7 +89,8 @@ l_tickers_unique = np.unique(column(l_tickers_new,0))
 df_all = df
 
 
-for d in range(int(backtest_days/n_forecast)+1)[::-1] :
+for d in range(8,10)[::-1]:
+#for d in range(int(backtest_days/n_forecast)+1)[::-1]:
     if d != 0 :
         print('-' * 5 + 'Backtest Iteration ' + str(d))
         df = df_all.head(len(df_all) - n_forecast*d)
