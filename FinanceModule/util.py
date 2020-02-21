@@ -3,14 +3,16 @@ from keras.layers import Dense, Dropout, LSTM, Input, Activation, concatenate, r
 from keras import optimizers
 import numpy as np
 np.random.seed(4)
-from tensorflow import set_random_seed
 from scipy.ndimage.interpolation import shift
 import pandas as pd
 from sklearn import preprocessing
 import numpy as np
-import copy
-import matplotlib.pyplot as plt
-import urllib
+from pulp import *
+
+from pypfopt.efficient_frontier import EfficientFrontier
+from pypfopt import risk_models
+from pypfopt import expected_returns
+from pypfopt.discrete_allocation import DiscreteAllocation, get_latest_prices
 
 def transformDataset(input_path,input_sep, output_path, output_sep,metadata_input_path, metadata_sep, filter_sectors = None, n_tickers = 'empty', n_last_values = 250 ):
     # filter out tickers that have no values in the last n days
@@ -191,12 +193,12 @@ def predictAutoencoder(autoencoder, data):
 
     return reconstruct
 
-def getReconstructionErrorsAndReturns(original_data, reconstructed_data, original_data_abs, forecasting_days):
+def getReconstructionErrorsAndReturns(df_pct_change, reconstructed_data, df_result_close, forecasting_days):
     array = []
     stocks_ranked = []
     num_columns = reconstructed_data.shape[1]
     for i in range(0, num_columns-1):
-        diff = np.linalg.norm((original_data.iloc[:, i] - reconstructed_data[:, i]))  # 2 norm difference
+        diff = np.linalg.norm((df_pct_change.iloc[:, i] - reconstructed_data[:, i]))  # 2 norm difference
         array.append(float(diff))
 
     ranking = np.array(array).argsort()
@@ -205,19 +207,19 @@ def getReconstructionErrorsAndReturns(original_data, reconstructed_data, origina
         stocks_ranked.append([ r
                               ,stock_index
                               ,array[stock_index]
-                              ,original_data.iloc[:, stock_index].name
-                              ,np.average(original_data.iloc[:, stock_index])
-                              ,np.average(original_data.iloc[-10:, stock_index])
-                              ,np.average(original_data.iloc[-50:, stock_index])
-                              ,np.average(original_data.iloc[-100:, stock_index])
-                              ,original_data_abs.iloc[-forecasting_days -1 :, stock_index].head(1).iloc[0]])
+                              ,df_pct_change.iloc[:, stock_index].name
+                              ,np.average(df_pct_change.iloc[:, stock_index])
+                              ,np.average(df_pct_change.iloc[-10:, stock_index])
+                              ,np.average(df_pct_change.iloc[-50:, stock_index])
+                              ,np.average(df_pct_change.iloc[-100:, stock_index])
+                              ,df_result_close.iloc[-forecasting_days -1 :, stock_index].head(1).iloc[0]])
         r = r + 1
 
     columns = ['ranking','stock_index', 'L2norm','stock_name','avg_returns','avg_returns_last10_days','avg_returns_last50_days','avg_returns_last100_days', 'current_price']
     df = pd.DataFrame(stocks_ranked, columns=columns)
     return df
 
-def getLatentFeaturesSimilariryAndReturns(original_data, latent_features,original_data_abs, forecasting_days):
+def getLatentFeaturesSimilariryAndReturns(df_pct_change, latent_features,df_result_close, forecasting_days):
     stocks_latent_feature = []
     array = []
     num_columns = latent_features.shape[0]
@@ -231,12 +233,12 @@ def getLatentFeaturesSimilariryAndReturns(original_data, latent_features,origina
     for latent_value in array:
         stocks_latent_feature.append([stock_index
                                  ,latent_value
-                                 , original_data.iloc[:, stock_index].name
-                                 , np.average(original_data.iloc[:, stock_index])*100
-                                 , np.average(original_data.iloc[-10:, stock_index])*100
-                                 , np.average(original_data.iloc[-50:, stock_index])*100
-                                 , np.average(original_data.iloc[-100:, stock_index])*100
-                                 ,original_data_abs.iloc[-forecasting_days - 1:, stock_index].head(1).iloc[0]])
+                                 , df_pct_change.iloc[:, stock_index].name
+                                 , np.average(df_pct_change.iloc[:, stock_index])*100
+                                 , np.average(df_pct_change.iloc[-10:, stock_index])*100
+                                 , np.average(df_pct_change.iloc[-50:, stock_index])*100
+                                 , np.average(df_pct_change.iloc[-100:, stock_index])*100
+                                 ,df_result_close.iloc[-forecasting_days - 1:, stock_index].head(1).iloc[0]])
         stock_index = stock_index + 1
 
     columns = ['stock_index',
@@ -250,3 +252,81 @@ def getLatentFeaturesSimilariryAndReturns(original_data, latent_features,origina
     df = pd.DataFrame(stocks_latent_feature, columns=columns)
     return df.sort_values(by=['latent_value'], ascending=True)
 
+
+
+
+def portfolio_selection(d, n_forecast,df_portfolio ,df_original, ranking_colum ,  n_stocks_per_bin, budget ,n_bins,group_by = True):
+    n_stocks_total = n_stocks_per_bin * n_bins
+    if group_by == True:
+        df_portfolio['rn'] = df_portfolio.sort_values([ranking_colum], ascending=[False]) \
+                                         .groupby(['latent_value_quartile']) \
+                                         .cumcount() + 1
+
+        df_portfolio_selected_stocks = df_portfolio[df_portfolio['rn'] <= n_stocks_per_bin]
+        print(df_portfolio_selected_stocks.__len__())
+    else:
+        df_portfolio['rn'] = df_portfolio[ranking_colum].rank(method='max', ascending=False)
+        df_portfolio_selected_stocks = df_portfolio[df_portfolio['rn'] <= n_stocks_total]
+        print(df_portfolio_selected_stocks.__len__())
+
+    var_names = ['x' + str(i) for i in range(n_stocks_total)]
+    x_int = [pulp.LpVariable(i, lowBound=0, cat='Integer') for i in var_names]
+
+    my_lp_problem = pulp.LpProblem("Portfolio_Selection_LP_Problem", pulp.LpMaximize)
+    # Objective function
+    my_lp_problem += lpSum([x_int[i] * df_portfolio_selected_stocks['current_price'].iloc[i] for i in range(n_stocks_total)]) <= budget
+    # Constraints
+    my_lp_problem += lpSum(
+        [x_int[i] * df_portfolio_selected_stocks['current_price'].iloc[i] for i in range(n_stocks_total)])
+
+    for i in range(n_stocks_total):
+        my_lp_problem += x_int[i] * df_portfolio_selected_stocks['current_price'].iloc[
+            i] <= (budget / n_stocks_total) * 0.5
+
+    my_lp_problem.solve()
+    pulp.LpStatus[my_lp_problem.status]
+
+
+    bought_volume_arr = []
+    for variable in my_lp_problem.variables():
+        print("{} = {}".format(variable.name, variable.varValue))
+        bought_volume_arr.append(variable.varValue)
+
+    df_portfolio_selected_stocks['bought_volume'] = bought_volume_arr
+
+    value_after_x_days_arr = []
+    for index in df_portfolio_selected_stocks.index:
+        # we need to find the stock value after x days, depending on the backtest iteration.
+        # Hence if we forecast 10 days in backtest 1, we need to consider the last value in the orginal dataset.
+        # If we are in the second backtest, hence we are looking back t-10*2 days then we need to consider the 11th day from the orginal dataset
+        value_after_x_days = df_original[index+ '_Close'].tail(n_forecast*d - n_forecast+ 1).iloc[0]
+        value_after_x_days_arr.append(value_after_x_days)
+
+    df_portfolio_selected_stocks['value_after_x_days'] = value_after_x_days_arr
+
+    df_portfolio_selected_stocks['delta'] = df_portfolio_selected_stocks['value_after_x_days'] -df_portfolio_selected_stocks['current_price']
+    df_portfolio_selected_stocks['pnl'] = df_portfolio_selected_stocks['delta'] * df_portfolio_selected_stocks['bought_volume']
+    print('Profit for iteration ' + str(d) + ': '  + str(df_portfolio_selected_stocks['pnl'].sum()))
+
+    profits = [df_portfolio_selected_stocks['pnl'].sum()]
+
+    return profits , df_portfolio_selected_stocks
+
+
+def calcMarkowitzPortfolio(df, budget):
+
+    # Calculate expected returns and sample covariance
+    mu = expected_returns.mean_historical_return(df)
+    S = risk_models.sample_cov(df)
+
+    # Optimise for maximal Sharpe ratio
+    ef = EfficientFrontier(mu, S)
+    weights = ef.max_sharpe()
+    cleaned_weights = ef.clean_weights()
+    ef.portfolio_performance(verbose=False)
+
+    latest_prices = get_latest_prices(df)
+    da = DiscreteAllocation(weights, latest_prices, total_portfolio_value=budget, min_allocation=-1)
+    discrete_allocation, discrete_leftover = da.lp_portfolio()
+
+    return discrete_allocation, discrete_leftover, weights, cleaned_weights
