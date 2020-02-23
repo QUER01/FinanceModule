@@ -11,10 +11,11 @@ from FinanceModule.util import createDataset \
     , defineModel \
     , defineAutoencoder \
     , predictAutoencoder \
-    , getLatentFeaturesSimilariryAndReturns \
-    , getReconstructionErrorsAndReturns \
+    , getLatentFeaturesSimilariryDF \
+    , getReconstructionErrorsDF \
     , portfolio_selection\
-    , calcMarkowitzPortfolio
+    , calcMarkowitzPortfolio\
+    , getAverageReturnsDF
 
 from FinanceModule.quandlModule import Quandl
 import copy
@@ -316,6 +317,8 @@ if timeseries_forecasting:
 # End of for loops
 
 if portfolio_optimization:
+    new_columns = []
+
     profits_option_1 = []
     tickers_option_1 = []
 
@@ -351,6 +354,9 @@ if portfolio_optimization:
 
             print('-' * 20 + 'Create dataset')
             df_result_close = df_result.filter(like='Close', axis=1)
+
+            [new_columns.append(c.split('_')[0]) for c in df_result_close.columns ]
+            df_result_close.columns = new_columns
             df_result_close = df_result_close.dropna(axis=1, how='any', thresh=0.90 * len(df_result))
 
             print('-' * 20 + 'Transform dataset')
@@ -360,7 +366,7 @@ if portfolio_optimization:
             # the percentage change function will make the firstrow equal to nan
             df_pct_change = df_pct_change.tail(len(df_pct_change) - 1)
 
-            print('-' * 20 + 'Step 1 : Returns vs. recreation eroor (L2-norm)')
+            print('-' * 20 + 'Step 1 : Returns vs. recreation eroor (recreation_error)')
             print('-' * 25 + 'Transform dataset with MinMax Scaler')
             df_scaler = preprocessing.MinMaxScaler()
             df_pct_change_normalised = df_scaler.fit_transform(df_pct_change)
@@ -384,13 +390,10 @@ if portfolio_optimization:
             reconstruct_real = df_scaler.inverse_transform(reconstruct)
 
             print('-' * 25 + 'Calculate L2 norm as reconstruction loss metric')
-            df_returns_l2norm = getReconstructionErrorsAndReturns(df_pct_change=df_pct_change
-                                                                  , reconstructed_data=reconstruct_real
-                                                                  , df_result_close=df_result_close
-                                                                  , forecasting_days=forecasting_days)
+            df_recreation_error = getReconstructionErrorsDF(df_pct_change=df_pct_change
+                                                                  , reconstructed_data=reconstruct_real )
 
             print('-' * 20 + 'Step 2 : Returns vs. latent feature similarity')
-
             print('-' * 25 + 'Transpose dataset')
             df_pct_change_transposed = df_pct_change.transpose()
 
@@ -418,10 +421,8 @@ if portfolio_optimization:
             latent_features = autoencoderTransposedLatent.predict(df_pct_change_transposed_normalised)
 
             print('-' * 25 + 'Calculate L2 norm as similarity metric')
-            df_returns_similarity = getLatentFeaturesSimilariryAndReturns(df_pct_change=df_pct_change
-                                                                          , latent_features=latent_features
-                                                                          , df_result_close=df_result_close
-                                                                          , forecasting_days=forecasting_days)
+            df_similarity = getLatentFeaturesSimilariryDF(df_pct_change=df_pct_change
+                                                        , latent_features=latent_features )
 
 
 
@@ -433,20 +434,29 @@ if portfolio_optimization:
             print('-' * 20 + 'Step 3: Markowitz model')
             discrete_allocation, discrete_leftover, weights, cleaned_weights = calcMarkowitzPortfolio(df=df_result_close,
                                                                                                         budget=budget)
-            mw_df = pd.DataFrame(discrete_allocation.items(),  columns=['stock','value'])
+            df_markowitz_allocation = pd.DataFrame(discrete_allocation.items(),  columns=['stock_name','bought_volume'])
+            df_markowitz_allocation = df_markowitz_allocation.set_index('stock_name')
+
+
+            df_returns = getAverageReturnsDF(stock_names=df_pct_change.columns
+                                , df_pct_change=df_pct_change
+                                , df_result_close = df_result_close
+                                , df_original = df_original
+                                , forecasting_days= forecasting_days
+                                , backtest_iteration = d)
 
             if plot_results:
                 print('-' * 25 + 'Plot the results')
                 top_n = 5
-                df_returns_similarity_top_n = df_returns_similarity.iloc[0:top_n, :]
-                df_returns_l2norm_top_n = df_returns_l2norm.iloc[0:top_n, :]
+                df_similarity_top_n = df_similarity.iloc[0:top_n, :]
+                df_recreation_error_top_n = df_recreation_error.iloc[0:top_n, :]
 
                 bottom_n = 5
-                df_returns_similarity_bottom_n = df_returns_similarity.tail(bottom_n)
-                df_returns_l2norm_bottom_n = df_returns_l2norm.tail(bottom_n)
+                df_similarity_bottom_n = df_similarity.tail(bottom_n)
+                df_recreation_error_bottom_n = df_recreation_error.tail(bottom_n)
 
                 print('-' * 30 + 'Plot top 5 most similar time series')
-                df_plot = df_returns_similarity_top_n
+                df_plot = df_similarity_top_n
                 plt.figure(figsize=(11, 6))
                 for stock in df_plot['stock_name']:
                     plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close', ), label=stock)
@@ -458,7 +468,7 @@ if portfolio_optimization:
                 plt.show()
 
                 print('-' * 30 + 'Plot the 5 least similar time series')
-                df_plot = df_returns_similarity_bottom_n
+                df_plot = df_similarity_bottom_n
                 plt.figure(figsize=(11, 6))
                 for stock in df_plot['stock_name']:
                     plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close', label=stock))
@@ -472,47 +482,52 @@ if portfolio_optimization:
             print('-' * 20 + 'Step 4: Create Portfolio ')
             print(
                 '-' * 25 + 'Join the datasets from the similarity score and the reconstruction error with some metadata')
-            df_returns_similarity.stock_name = df_returns_similarity['stock_name'].str.split('_', n=1, expand=True)
-            df_portfolio = df_returns_similarity[['stock_name'
-                , 'latent_value'
-                , 'avg_returns_last10_days'
-                , 'avg_returns_last50_days'
-                , 'avg_returns_last100_days'
-                , 'current_price']].join(df_returns_l2norm[['L2norm']], how='left')
-
-            df_portfolio = df_portfolio.set_index('stock_name')
-
-
             df_metadata = pd.read_csv('data/historical_stocks.csv', sep=',')
             df_metadata = df_metadata.rename(columns={'ticker': 'stock_name'})
             df_metadata = df_metadata.set_index('stock_name')
 
-            df_portfolio = df_portfolio.join(df_metadata, how='left')
+            df_scaled_mse = pd.read_csv('data/df_scaled_mse_' + str(d)+'.csv', sep=';')
+            df_scaled_mse = df_scaled_mse.set_index('ticker')
+
+            df_portfolio = df_returns\
+                            .join(df_recreation_error[['recreation_error']], how='left')\
+                            .join(df_similarity[['similarity_score']], how='left') \
+                            .join(df_scaled_mse[['scaled mse']], how='left')\
+                            .join(df_metadata, how='left')
+
 
             # remove very high values
-            df_portfolio = df_portfolio[df_portfolio['L2norm'] < df_portfolio['L2norm'].quantile(0.99)]
+            df_portfolio = df_portfolio[df_portfolio['recreation_error'] < df_portfolio['recreation_error'].quantile(0.99)]
 
             # calculate bins
-            df_portfolio['latent_value_quartile'] = pd.qcut(df_portfolio.latent_value, n_bins, precision=0)
+            df_portfolio['similarity_score_quartile'] = pd.qcut(df_portfolio.similarity_score, n_bins, precision=0)
 
             # calculate return*recreation error
             df_scaler_recreation_error = preprocessing.MinMaxScaler()
             df_portfolio['recreation_error_scaled_inverse'] = 1 - df_scaler_recreation_error.fit_transform(
-                df_portfolio[['L2norm']].values)
-            df_portfolio['avg_return_recreation_error'] = df_portfolio[avg_return_column] * df_portfolio[
+                df_portfolio[['recreation_error']].values)
+            df_portfolio['avg_return*recreation_error'] = df_portfolio[avg_return_column] * df_portfolio[
                 'recreation_error_scaled_inverse']
+
+            #calculate inverse scaled scaled mse
+            df_scaler_sclaed_mse = preprocessing.MinMaxScaler()
+            df_portfolio['scaled_mse_scaled_inverse'] = 1 - df_scaler_sclaed_mse.fit_transform(
+                df_portfolio[['scaled mse']].values)
+            df_portfolio['recreation_error*scaled_mse_scaled_inverse'] = df_portfolio['scaled_mse_scaled_inverse'] * df_portfolio[
+                'recreation_error_scaled_inverse']
+
 
             if plot_results:
                 # plot the results
                 print('-' * 25 + 'Plot the results')
                 df_plot = df_portfolio[df_portfolio[avg_return_column] > 0]
-                df_plot = df_plot[df_plot['latent_value'] < df_plot['latent_value'].quantile(0.99)]
+                df_plot = df_plot[df_plot['similarity_score'] < df_plot['similarity_score'].quantile(0.99)]
                 groups = df_plot.groupby('sector')
 
                 # Plot
                 fig, ax = plt.subplots(figsize=(10, 6))
                 for name, group in groups:
-                    ax.plot(group.latent_value, group[avg_return_column] * 100, marker='o', linestyle='', ms=12,
+                    ax.plot(group.similarity_score, group[avg_return_column] * 100, marker='o', linestyle='', ms=12,
                             label=name)
 
                 plt.title('Average retuns vs. similarity metric (latent feature values)')
@@ -523,13 +538,13 @@ if portfolio_optimization:
 
                 print('-' * 25 + 'Plot results')
                 df_plot = df_portfolio[df_portfolio[avg_return_column] > 0]
-                df_plot = df_plot[df_plot['L2norm'] < df_plot['L2norm'].quantile(0.99)]
+                df_plot = df_plot[df_plot['recreation_error'] < df_plot['recreation_error'].quantile(0.99)]
                 groups = df_plot.groupby('sector')
 
                 # Plot
                 fig, ax = plt.subplots(figsize=(10, 6))
                 for name, group in groups:
-                    ax.plot(group.L2norm, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label=name)
+                    ax.plot(group.recreation_error, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label=name)
 
                 plt.title('Average return vs. recreation error')
                 plt.xlabel("Recreation error")
@@ -540,13 +555,13 @@ if portfolio_optimization:
                 df_plot = df_portfolio[df_portfolio[avg_return_column] > 0]
 
                 df_plot = df_plot[df_plot[avg_return_column] < df_plot[avg_return_column].quantile(0.9)]
-                df_plot = df_plot[df_plot['L2norm'] < df_plot['L2norm'].quantile(0.9)]
-                groups = df_plot.groupby('latent_value_quartile')
+                df_plot = df_plot[df_plot['recreation_error'] < df_plot['recreation_error'].quantile(0.9)]
+                groups = df_plot.groupby('similarity_score_quartile')
 
                 # Plot
                 fig, ax = plt.subplots(figsize=(10, 6))
                 for name, group in groups:
-                    ax.plot(group.L2norm, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label=name)
+                    ax.plot(group.recreation_error, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label=name)
 
                 plt.title('Average return vs. recreation error by similarity quartiles (colors)')
                 plt.xlabel("Recreation error")
@@ -555,64 +570,62 @@ if portfolio_optimization:
                 plt.show()
 
             # merge the results
+            df_portfolio_selected_stocks_option_0 = df_markowitz_allocation.join(df_portfolio, how='left')
+            df_portfolio_selected_stocks_option_0 = df_portfolio_selected_stocks_option_0[df_portfolio_selected_stocks_option_0['bought_volume'] != 0]
+            df_portfolio_selected_stocks_option_0['pnl'] = df_portfolio_selected_stocks_option_0['delta'] * df_portfolio_selected_stocks_option_0['bought_volume']
+            markowitz_profit = [df_portfolio_selected_stocks_option_0['pnl'].sum()]
 
             profits_option_1, df_portfolio_selected_stocks_option_1 = portfolio_selection(d=d
-                                                                                          , n_forecast=n_forecast
                                                                                           , df_portfolio=df_portfolio
-                                                                                          , df_original=df_original
-                                                                                          , ranking_colum=avg_return_column
+                                                                                          , ranking_colum='recreation_error'
+                                                                                          , group_by=True
                                                                                           , n_stocks_per_bin=n_stocks_per_bin
                                                                                           , n_bins=n_bins
                                                                                           , budget=budget)
 
             profits_option_2, df_portfolio_selected_stocks_option_2 = portfolio_selection(d=d
-                                                                                          , n_forecast=n_forecast
                                                                                           , df_portfolio=df_portfolio
-                                                                                          , df_original=df_original
-                                                                                          , ranking_colum=avg_return_column
+                                                                                          , ranking_colum='recreation_error'
                                                                                           , group_by=False
                                                                                           , n_stocks_per_bin=n_stocks_per_bin
                                                                                           , n_bins=n_bins
                                                                                           , budget=budget)
 
             profits_option_3, df_portfolio_selected_stocks_option_3 = portfolio_selection(  d=d
-                                                                                          , n_forecast=n_forecast
                                                                                           , df_portfolio=df_portfolio
-                                                                                          , df_original=df_original
-                                                                                          , ranking_colum='avg_return_recreation_error'
+                                                                                          , ranking_colum='recreation_error*scaled_mse_scaled_inverse'
+                                                                                          , group_by=True
                                                                                           , n_stocks_per_bin=n_stocks_per_bin
                                                                                           , n_bins=n_bins
                                                                                           , budget=budget)
 
             profits_option_4, df_portfolio_selected_stocks_option_4 = portfolio_selection(d=d
-                                                                                          , n_forecast=n_forecast
                                                                                           , df_portfolio=df_portfolio
-                                                                                          , df_original=df_original
                                                                                           , group_by=False
+                                                                                          , ranking_colum='recreation_error*scaled_mse_scaled_inverse'
                                                                                           , n_stocks_per_bin=n_stocks_per_bin
                                                                                           , n_bins=n_bins
                                                                                           , budget=budget)
 
             print('-' * 25 + 'Merging the portfolio optimization results and compare them')
-            df_portfolio_selected_stocks_option_1['options'] = 'avgerage returns last x days with grouping'
-            df_portfolio_selected_stocks_option_2['options'] = 'average returns last x days without grouping'
+            df_portfolio_selected_stocks_option_0['options'] = 'Markowitz'
+            df_portfolio_selected_stocks_option_1['options'] = 'recreation error with grouping'
+            df_portfolio_selected_stocks_option_2['options'] = 'recreation error without grouping'
             df_portfolio_selected_stocks_option_3[
-                'options'] = 'avgerage returns last x days * recreation error with grouping'
+                'options'] = 'Scaled MSE * recreation error with grouping'
             df_portfolio_selected_stocks_option_4[
-                'options'] = 'avgerage returns last x days * recreation error without grouping'
+                'options'] = 'Scaled MSE * recreation error without grouping'
 
-            df_portfolio_selected_stocks_option_1['backtest_iteration'] = d
-            df_portfolio_selected_stocks_option_2['backtest_iteration'] = d
-            df_portfolio_selected_stocks_option_3['backtest_iteration'] = d
-            df_portfolio_selected_stocks_option_4['backtest_iteration'] = d
 
-            df_portfolio_selected_stocks_option_1['total_profit'] = profits_option_1[0]
-            df_portfolio_selected_stocks_option_2['total_profit'] = profits_option_2[0]
-            df_portfolio_selected_stocks_option_3['total_profit'] = profits_option_3[0]
-            df_portfolio_selected_stocks_option_4['total_profit'] = profits_option_4[0]
+            df_portfolio_selected_stocks_option_0['total_profit'] = int(markowitz_profit[0])
+            df_portfolio_selected_stocks_option_1['total_profit'] = int(profits_option_1[0])
+            df_portfolio_selected_stocks_option_2['total_profit'] = int(profits_option_2[0])
+            df_portfolio_selected_stocks_option_3['total_profit'] = int(profits_option_3[0])
+            df_portfolio_selected_stocks_option_4['total_profit'] = int(profits_option_4[0])
 
-            df_portfolio_selection_results = df_portfolio_selected_stocks_option_1.append(
-                df_portfolio_selected_stocks_option_2) \
+            df_portfolio_selection_results = df_portfolio_selected_stocks_option_0.append(
+                df_portfolio_selected_stocks_option_1) \
+                .append(df_portfolio_selected_stocks_option_2) \
                 .append(df_portfolio_selected_stocks_option_3) \
                 .append(df_portfolio_selected_stocks_option_4)
 
@@ -669,9 +682,6 @@ if portfolio_optimization:
     # --------------------------------------------- #
     #       WORK IN PROGRESS
     # --------------------------------------------- #
-
-    latent_value_qcut = pd.qcut(df_portfolio['latent_value'], 4)
-
 
 
 

@@ -193,7 +193,53 @@ def predictAutoencoder(autoencoder, data):
 
     return reconstruct
 
-def getReconstructionErrorsAndReturns(df_pct_change, reconstructed_data, df_result_close, forecasting_days):
+
+def getAverageReturns(df, index, days=None):
+    '''
+
+    :param df:
+    :param index:
+    :param days:
+    :return:
+    '''
+
+    if days == None:
+        average = np.average(df.iloc[:, index])*100
+    else:
+        average =  np.average(df.iloc[-days:, index])*100
+
+    return average
+
+
+def getAverageReturnsDF(stock_names , df_pct_change, df_result_close,df_original, forecasting_days, backtest_iteration):
+
+    stocks_ranked = []
+
+    stock_index = 0
+    for stock_name in stock_names:
+        stocks_ranked.append([   backtest_iteration
+                                 , df_pct_change.iloc[:, stock_index].name
+                                 , getAverageReturns(df=df_pct_change, index=stock_index)
+                                 , getAverageReturns(df=df_pct_change, index=stock_index, days=10)
+                                 , getAverageReturns(df=df_pct_change, index=stock_index, days=50)
+                                 , getAverageReturns(df=df_pct_change, index=stock_index, days=100)
+                                 , df_result_close.iloc[-forecasting_days - 1:, stock_index].head(1).iloc[0]
+                                 ,df_original[df_pct_change.iloc[:, stock_index].name + '_Close'].tail(forecasting_days * backtest_iteration - forecasting_days + 1).iloc[0]])
+        stock_index = stock_index + 1
+
+
+    columns = ['backtest_iteration','stock_name', 'avg_returns', 'avg_returns_last10_days',
+               'avg_returns_last50_days', 'avg_returns_last100_days', 'current_price','value_after_x_days']
+
+    df = pd.DataFrame(stocks_ranked, columns=columns)
+    df['delta'] = df['value_after_x_days'] - df['current_price']
+
+    df = df.set_index('stock_name')
+    return df
+
+
+def getReconstructionErrorsDF(df_pct_change, reconstructed_data):
+
     array = []
     stocks_ranked = []
     num_columns = reconstructed_data.shape[1]
@@ -206,20 +252,17 @@ def getReconstructionErrorsAndReturns(df_pct_change, reconstructed_data, df_resu
     for stock_index in ranking:
         stocks_ranked.append([ r
                               ,stock_index
-                              ,array[stock_index]
                               ,df_pct_change.iloc[:, stock_index].name
-                              ,np.average(df_pct_change.iloc[:, stock_index])
-                              ,np.average(df_pct_change.iloc[-10:, stock_index])
-                              ,np.average(df_pct_change.iloc[-50:, stock_index])
-                              ,np.average(df_pct_change.iloc[-100:, stock_index])
-                              ,df_result_close.iloc[-forecasting_days -1 :, stock_index].head(1).iloc[0]])
+                              ,array[stock_index]
+                              ])
         r = r + 1
 
-    columns = ['ranking','stock_index', 'L2norm','stock_name','avg_returns','avg_returns_last10_days','avg_returns_last50_days','avg_returns_last100_days', 'current_price']
+    columns = ['ranking','stock_index', 'stock_name' ,'recreation_error']
     df = pd.DataFrame(stocks_ranked, columns=columns)
+    df = df.set_index('stock_name')
     return df
 
-def getLatentFeaturesSimilariryAndReturns(df_pct_change, latent_features,df_result_close, forecasting_days):
+def getLatentFeaturesSimilariryDF(df_pct_change, latent_features):
     stocks_latent_feature = []
     array = []
     num_columns = latent_features.shape[0]
@@ -230,36 +273,28 @@ def getLatentFeaturesSimilariryAndReturns(df_pct_change, latent_features,df_resu
 
 
     stock_index = 0
-    for latent_value in array:
+    for similarity_score in array:
         stocks_latent_feature.append([stock_index
-                                 ,latent_value
+                                 ,similarity_score
                                  , df_pct_change.iloc[:, stock_index].name
-                                 , np.average(df_pct_change.iloc[:, stock_index])*100
-                                 , np.average(df_pct_change.iloc[-10:, stock_index])*100
-                                 , np.average(df_pct_change.iloc[-50:, stock_index])*100
-                                 , np.average(df_pct_change.iloc[-100:, stock_index])*100
-                                 ,df_result_close.iloc[-forecasting_days - 1:, stock_index].head(1).iloc[0]])
+                                 , ])
         stock_index = stock_index + 1
 
     columns = ['stock_index',
-               'latent_value'
-               ,'stock_name'
-               ,'avg_returns'
-               ,'avg_returns_last10_days'
-               ,'avg_returns_last50_days'
-               ,'avg_returns_last100_days'
-               ,'current_price']
+               'similarity_score'
+               ,'stock_name']
     df = pd.DataFrame(stocks_latent_feature, columns=columns)
-    return df.sort_values(by=['latent_value'], ascending=True)
+    df = df.set_index('stock_name')
+    return df.sort_values(by=['similarity_score'], ascending=True)
 
 
 
 
-def portfolio_selection(d, n_forecast,df_portfolio ,df_original, ranking_colum ,  n_stocks_per_bin, budget ,n_bins,group_by = True):
+def portfolio_selection(d,df_portfolio , ranking_colum ,  n_stocks_per_bin, budget ,n_bins,group_by = True):
     n_stocks_total = n_stocks_per_bin * n_bins
     if group_by == True:
         df_portfolio['rn'] = df_portfolio.sort_values([ranking_colum], ascending=[False]) \
-                                         .groupby(['latent_value_quartile']) \
+                                         .groupby(['similarity_score_quartile']) \
                                          .cumcount() + 1
 
         df_portfolio_selected_stocks = df_portfolio[df_portfolio['rn'] <= n_stocks_per_bin]
@@ -294,17 +329,7 @@ def portfolio_selection(d, n_forecast,df_portfolio ,df_original, ranking_colum ,
 
     df_portfolio_selected_stocks['bought_volume'] = bought_volume_arr
 
-    value_after_x_days_arr = []
-    for index in df_portfolio_selected_stocks.index:
-        # we need to find the stock value after x days, depending on the backtest iteration.
-        # Hence if we forecast 10 days in backtest 1, we need to consider the last value in the orginal dataset.
-        # If we are in the second backtest, hence we are looking back t-10*2 days then we need to consider the 11th day from the orginal dataset
-        value_after_x_days = df_original[index+ '_Close'].tail(n_forecast*d - n_forecast+ 1).iloc[0]
-        value_after_x_days_arr.append(value_after_x_days)
 
-    df_portfolio_selected_stocks['value_after_x_days'] = value_after_x_days_arr
-
-    df_portfolio_selected_stocks['delta'] = df_portfolio_selected_stocks['value_after_x_days'] -df_portfolio_selected_stocks['current_price']
     df_portfolio_selected_stocks['pnl'] = df_portfolio_selected_stocks['delta'] * df_portfolio_selected_stocks['bought_volume']
     print('Profit for iteration ' + str(d) + ': '  + str(df_portfolio_selected_stocks['pnl'].sum()))
 
