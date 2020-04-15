@@ -19,7 +19,7 @@ from pypfopt.discrete_allocation import DiscreteAllocation, get_latest_prices
 
 
 
-def column(matrix, i):
+def fun_column(matrix, i):
     return [row[i] for row in matrix]
 
 def chunks(lst, n):

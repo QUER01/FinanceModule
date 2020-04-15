@@ -77,16 +77,16 @@ df_original.index = pd.to_datetime(df_original.index)
 
 
 # Geberating a descriptive analysis
-profile = ProfileReport(df_original, title='Stock Market Data', html={'style':{'full_width':True}})
-profile.to_file(output_file="analysis/stock_market_data_report.html")
+#profile = ProfileReport(df_original, title='Stock Market Data', html={'style':{'full_width':True}})
+#profile.to_file(output_file="analysis/stock_market_data_report.html")
 
 # filter only particular stocks
-df_original = df_original.filter(regex="(GOOGL|AABA|FORD|ADXS|KOOL|ACHV|ADXS)")
+df_original = df_original.filter(regex="(GOOGL|AAPL|AMZ|SAP)")
 
 # Get tickers as a list
 print('-' * 5 + 'Getting list of unique tickers')
 l_tickers_new = df_original.columns.str.split('_')
-l_tickers_unique = np.unique(column(l_tickers_new, 0))
+l_tickers_unique = np.unique(fun_column(l_tickers_new, 0))
 l_tickers_unique_chunks = list(chunks(l_tickers_unique, parallel_processes))
 
 
@@ -138,6 +138,7 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
             assert unscaled_y_test.shape == y_test_predicted.shape
 
             metrics = evaluate_all(unscaled_y_test, y_test_predicted)
+            #metrics = evaluate_all(next_day_open_values, y_predicted)
 
             #real_mse = np.mean(np.square(unscaled_y_test - y_test_predicted))
             #scaled_mse = real_mse / (np.max(unscaled_y_test) - np.min(unscaled_y_test)) * 100
