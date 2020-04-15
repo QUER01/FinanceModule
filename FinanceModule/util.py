@@ -14,6 +14,22 @@ from pypfopt import risk_models
 from pypfopt import expected_returns
 from pypfopt.discrete_allocation import DiscreteAllocation, get_latest_prices
 
+
+
+
+
+
+def column(matrix, i):
+    return [row[i] for row in matrix]
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+
+
 def transformDataset(input_path,input_sep, output_path, output_sep,metadata_input_path, metadata_sep, filter_sectors = None, n_tickers = 'empty', n_last_values = 250 ):
     # filter out tickers that have no values in the last n days
     df = pd.read_csv(input_path, sep=input_sep)
@@ -174,8 +190,12 @@ def defineAutoencoder(num_stock, encoding_dim = 5, verbose=0):
     # connect all layers
     input = Input(shape=(num_stock,))
 
-    encoded = Dense(encoding_dim, activation='relu', kernel_regularizer=regularizers.l2(0.00001),name ='my_latent')(input)
-    decoded = Dense(num_stock, activation='linear', kernel_regularizer=regularizers.l2(0.00001))(encoded)  # see 'Stacked Auto-Encoders' in paper
+    encoded = Dense(encoding_dim, kernel_regularizer=regularizers.l2(0.00001),name ='Encoder_Input')(input)
+    encoded = Activation("relu", name='Encoder_Activation_function')(encoded)
+    encoded = Dropout(0.2, name='Encoder_Dropout')(encoded)
+
+    decoded = Dense(num_stock, kernel_regularizer=regularizers.l2(0.00001), name ='Decoder_Input')(encoded)  # see 'Stacked Auto-Encoders' in paper
+    decoded = Activation("linear", name='Decoder_Activation_function')(decoded)
 
     # construct and compile AE model
     autoencoder = Model(inputs=input, outputs=decoded)
@@ -183,6 +203,7 @@ def defineAutoencoder(num_stock, encoding_dim = 5, verbose=0):
     autoencoder.compile(optimizer=adam, loss='mean_squared_error')
     if verbose!= 0:
         autoencoder.summary()
+
     return autoencoder
 
 def predictAutoencoder(autoencoder, data):
@@ -336,6 +357,7 @@ def portfolio_selection(d,df_portfolio , ranking_colum ,  n_stocks_per_bin, budg
     profits = [df_portfolio_selected_stocks['pnl'].sum()]
 
     return profits , df_portfolio_selected_stocks
+
 
 
 def calcMarkowitzPortfolio(df, budget):

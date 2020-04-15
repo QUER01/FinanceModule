@@ -1,10 +1,16 @@
 import time
+import matplotlib
+import pydot
+import os
+from pandas_profiling import ProfileReport
+os.environ["PATH"] += os.pathsep + 'lib/Graphviz2.38/bin/'
 import matplotlib.pyplot as plt
 from keras.models import Model
 import numpy as np
 from tensorflow import set_random_seed
-
+from keras.utils.vis_utils import  plot_model
 set_random_seed(4)
+from FinanceModule.util_forecasting_metrics import *
 from FinanceModule.util import createDataset \
     , transformDataset \
     , splitTrainTest \
@@ -15,7 +21,9 @@ from FinanceModule.util import createDataset \
     , getReconstructionErrorsDF \
     , portfolio_selection\
     , calcMarkowitzPortfolio\
-    , getAverageReturnsDF
+    , getAverageReturnsDF\
+    , chunks\
+    , column
 
 from FinanceModule.quandlModule import Quandl
 import copy
@@ -28,7 +36,7 @@ import gc
 from multiprocessing import Pool, TimeoutError, Process
 import multiprocessing
 
-plt.xkcd()
+#plt.xkcd()
 
 print('-' * 50)
 print('PART I: Timeseries Cleaning')
@@ -38,19 +46,21 @@ print('-' * 50)
 history_points = 150
 test_split = 0.9
 n_forecast = 10
-n_tickers = 100
+n_tickers = 1000
 n_days = 250 * 4
 sectors = ['FINANCE', 'CONSUMER SERVICES', 'TECHNOLOGY',
            'CAPITAL GOODS', 'BASIC INDUSTRIES', 'HEALTH CARE',
            'CONSUMER DURABLES', 'ENERGY', 'TRANSPORTATION', 'CONSUMER NON-DURABLES']
 backtest_days = 70
 scaled_mse_arr = []
-plot_results = False
-timeseries_evaluation = False
+plot_results = True
+timeseries_evaluation = True
 timeseries_forecasting = True
 portfolio_optimization = False
-
 parallel_processes = multiprocessing.cpu_count() - 1
+
+fontsize = 12
+
 
 """
 transformDataset( input_path='data/historical_stock_prices.csv', input_sep=','
@@ -65,28 +75,24 @@ print('-' * 5 + 'Loading the dataset from disk')
 df_original = pd.read_csv('data/historical_stock_prices_filtered.csv', sep=';', index_col='date')
 df_original.index = pd.to_datetime(df_original.index)
 
+
+# Geberating a descriptive analysis
+profile = ProfileReport(df_original, title='Stock Market Data', html={'style':{'full_width':True}})
+profile.to_file(output_file="analysis/stock_market_data_report.html")
+
+# filter only particular stocks
+df_original = df_original.filter(regex="(GOOGL|AABA|FORD|ADXS|KOOL|ACHV|ADXS)")
+
 # Get tickers as a list
 print('-' * 5 + 'Getting list of unique tickers')
 l_tickers_new = df_original.columns.str.split('_')
-
-
-def column(matrix, i):
-    return [row[i] for row in matrix]
-
-
 l_tickers_unique = np.unique(column(l_tickers_new, 0))
-
-
-def chunks(lst, n):
-    """Yield successive n-sized chunks from lst."""
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
-
-
 l_tickers_unique_chunks = list(chunks(l_tickers_unique, parallel_processes))
 
 
+
 def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasting):
+
     print('-' * 10 + 'Iteration: ' + str(i) + '/' + str(len(l_tickers_unique)) + '  ticker name:' + column)
     df_filtered = df.filter(regex='^' + column + '_', axis=1)
     if len(df_filtered.columns) != 5:
@@ -129,55 +135,86 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
             y_predicted = model.predict([ohlcv_histories_normalised, technical_indicators])
             y_predicted = y_normaliser.inverse_transform(y_predicted)
             assert unscaled_y_test.shape == y_test_predicted.shape
-            real_mse = np.mean(np.square(unscaled_y_test - y_test_predicted))
-            scaled_mse = real_mse / (np.max(unscaled_y_test) - np.min(unscaled_y_test)) * 100
-            print('-' * 25 + 'Scaled MSE: ' + str(scaled_mse))
-            scaled_mse_arr.append([d, column, scaled_mse])
+            assert unscaled_y_test.shape == y_test_predicted.shape
 
-            df_scaled_mse = pd.DataFrame(data=scaled_mse_arr, columns=['backtest_iteration', 'ticker', 'scaled mse'])
+            metrics = evaluate_all(unscaled_y_test, y_test_predicted)
+
+            #real_mse = np.mean(np.square(unscaled_y_test - y_test_predicted))
+            #scaled_mse = real_mse / (np.max(unscaled_y_test) - np.min(unscaled_y_test)) * 100
+            #print('-' * 25 + 'Scaled MSE: ' + str(scaled_mse))
+            #scaled_mse_arr.append([d, column, scaled_mse])
+
+            # TODO: change name to df_mase
+            df_scaled_mse = pd.DataFrame(data=metrics['mase'], columns=['backtest_iteration', 'ticker', 'scaled mse'])
             df_scaled_mse.to_csv('data/df_scaled_mse_' + str(d) + '_' + column + '.csv', sep=';')
 
             if plot_results:
                 # plot the results
                 print('-' * 20 + 'Plot the results')
-                plt.gcf().set_size_inches(9, 16, forward=True)
+                plt.figure()
+                plt.rcParams["figure.figsize"] = (10, 7)
+                plt.box(False)
                 fig, (ax1, ax2) = plt.subplots(2, 1)
+                fig.tight_layout(pad=5.0)
+
+
                 # fig.suptitle('Horizontally stacked subplots')
                 start = 0
                 end = -1
                 real = ax1.plot(next_day_open_values[start:end], label='real')
                 pred = ax1.plot(y_predicted[start:end], label='predicted')
 
+                # set title
+                fig.suptitle('Stock price [{stock}] over time. [MASE = {mase}]'.format(stock=column, mase = str(round(metrics['mase'],2))),  fontsize=fontsize)
+
+                # removing all borders
+                ax1.spines['top'].set_visible(False)
+                ax1.spines['right'].set_visible(False)
+                ax1.spines['left'].set_visible(False)
+                ax1.spines['bottom'].set_visible(False)
+
+
                 real = ax2.plot(unscaled_y_test[start:end], label='real')
                 pred = ax2.plot(y_test_predicted[start:end], label='predicted')
 
-                plt.legend(['Real', 'Predicted'])
+                ax2.set_xlabel('Days')
+                #ax2.set_ylabel('€')
+
+                ax2.spines['top'].set_visible(False)
+                ax2.spines['right'].set_visible(False)
+                ax2.spines['left'].set_visible(False)
+                ax2.spines['bottom'].set_visible(False)
+
+                ax1.legend(['Real', 'Predicted'], frameon=False, fontsize=fontsize)
+
                 plt.show()
                 plt.savefig('img/backtest_' + str(d) + '_' + column + '_evaluation.png')
 
         ## forecast
         print('-' * 15 + 'PART III: ' + str(n_forecast) + '-Step-Forward Prediction ')
         for j in range(0, n_forecast):
-
+            print('-' * 17 + 'Starting forecast ' + str(j)  )
             print('-' * 20 + 'Transform the timeseries into an supervised learning problem')
             next_day_open_values_normalised, next_day_open_values, ohlcv_histories_normalised, technical_indicators, data_normaliser, y_normaliser = createDataset(
                 df_filtered)
 
-            if j == 0:
-                # initialize the dataset
-                print('-' * 20 + 'Initialize certain objects')
+            #if j == 0:
+            # initialize the dataset
+            print('-' * 20 + 'Initialize certain objects')
 
-                # model architecture
-                print('-' * 25 + 'Design the model')
-                model = defineModel(ohlcv_histories_normalised=ohlcv_histories_normalised,
-                                    technical_indicators=technical_indicators, verbose=0)
-                # fit model
-                print('-' * 25 + 'Fit the model')
-                model.fit(x=[ohlcv_histories_normalised, technical_indicators],
-                          y=next_day_open_values_normalised,
-                          batch_size=32, epochs=50, shuffle=True, validation_split=0.1, verbose=0)
+            # model architecture
+            print('-' * 25 + 'Design the model')
+            model = defineModel(ohlcv_histories_normalised=ohlcv_histories_normalised,
+                                technical_indicators=technical_indicators, verbose=0)
+            # fit model
+            print('-' * 25 + 'Fit the model')
+            model.fit(x=[ohlcv_histories_normalised, technical_indicators],
+                      y=next_day_open_values_normalised,
+                      batch_size=32, epochs=50, shuffle=True, validation_split=0.1, verbose=0)
 
-                model.save('img/backtest_' + str(d) + '_' + column + '_forecasting_model.h5')
+            model.save('img/backtest_' + str(d) + '_' + column + '_forecasting_model.h5')
+
+
 
             # evaluate model
             print('-' * 20 + 'Predict with the model')
@@ -219,10 +256,12 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
         # save to disk
         print('-' * 10 + ' Save results to disk Backtest number: ' + str(d) + ' as: data/df_result_' + str(d) + '.csv')
         df_result.to_csv('data/df_result_' + str(d) + '_' + column + '.csv', sep=';')
+        plot_model(model, to_file='img/model_lstm_{name}.png'.format(name = column), show_shapes=True, show_layer_names=True)
 
         if plot_results:
             print('-' * 15 + ' Plot the results of the ' + str(n_forecast) + '-Step-Forward Prediction ')
-            plt.figure(figsize=(20, 5))
+            plt.figure(figsize=(18, 7))
+            plt.box(False)
             plt.plot(df_filtered.index, df_filtered[df_filtered.columns[0]])
             plt.plot(df_filtered.index, df_filtered[df_filtered.columns[1]])
             plt.plot(df_filtered.index, df_filtered[df_filtered.columns[2]])
@@ -233,12 +272,12 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
             # plt.plot(df_proj.index, df_proj['Prediction'], color='y')
             plt.legend(
                 [df_filtered.columns[0], df_filtered.columns[1], df_filtered.columns[2], df_filtered.columns[3],
-                 df_predicted.columns[0]])
+                 df_predicted.columns[0]], frameon=False)
             plt.xticks(fontsize=18)
             plt.yticks(fontsize=16)
             plt.show()
 
-        plt.savefig('img/backtest_' + str(d) + '_' + column + '.png')
+            plt.savefig('img/backtest_' + str(d) + '_' + column + '.png')
 
         # clean up
         del df_predict_ohlcv
@@ -253,9 +292,10 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
         gc.collect()
 
 
+
 if timeseries_forecasting:
-    for d in range(8, 16)[::-1]:
-        # for d in range(int(backtest_days/n_forecast)+1)[::-1]:
+    #for d in range(8, 16)[::-1]:
+    for d in range(int(backtest_days/n_forecast)+1)[::-1]:
         if d != 0:
             print('-' * 5 + 'Backtest Iteration ' + str(d))
             df = df_original.head(len(df_original) - n_forecast * d)
@@ -264,6 +304,8 @@ if timeseries_forecasting:
             # for i in range(0,len(l_tickers_unique)):
             j = 0
             for j_val in l_tickers_unique_chunks:
+
+
                 print(j_val)
                 print('opening new pool: ' + str(j) + '/' + str(len(l_tickers_unique_chunks)))
                 pool = Pool(processes=parallel_processes)  # start 12 worker processes
@@ -301,6 +343,7 @@ if timeseries_forecasting:
                         if timeseries_evaluation:
                             df_scaled_mse = pd.DataFrame()
 
+
                     if timeseries_forecasting:
                         df_result = df_result.join(df_result_ticker)
                     if timeseries_evaluation:
@@ -317,6 +360,7 @@ if timeseries_forecasting:
 # End of for loops
 
 if portfolio_optimization:
+
     new_columns = []
 
     profits_option_1 = []
@@ -354,7 +398,10 @@ if portfolio_optimization:
 
             print('-' * 20 + 'Create dataset')
             df_result_close = df_result.filter(like='Close', axis=1)
+            df_result_close = df_result_close.iloc[:, 0:250]
+            #df_result_close = df_result_close.filter(like='GOOGL', axis=1)
 
+            new_columns = []
             [new_columns.append(c.split('_')[0]) for c in df_result_close.columns ]
             df_result_close.columns = new_columns
             df_result_close = df_result_close.dropna(axis=1, how='any', thresh=0.90 * len(df_result))
@@ -366,7 +413,7 @@ if portfolio_optimization:
             # the percentage change function will make the firstrow equal to nan
             df_pct_change = df_pct_change.tail(len(df_pct_change) - 1)
 
-            print('-' * 20 + 'Step 1 : Returns vs. recreation eroor (recreation_error)')
+            print('-' * 20 + 'Step 1 : Returns vs. recreation error (recreation_error)')
             print('-' * 25 + 'Transform dataset with MinMax Scaler')
             df_scaler = preprocessing.MinMaxScaler()
             df_pct_change_normalised = df_scaler.fit_transform(df_pct_change)
@@ -375,6 +422,8 @@ if portfolio_optimization:
             print('-' * 25 + 'Define autoencoder model')
             num_stock = len(df_pct_change.columns)
             autoencoder = defineAutoencoder(num_stock=num_stock, encoding_dim=5, verbose=0)
+            plot_model(autoencoder, to_file='img/model_autoencoder_1.png', show_shapes=True,
+                       show_layer_names=True)
 
             # train autoencoder
             print('-' * 25 + 'Train autoencoder model')
@@ -393,6 +442,13 @@ if portfolio_optimization:
             df_recreation_error = getReconstructionErrorsDF(df_pct_change=df_pct_change
                                                                   , reconstructed_data=reconstruct_real )
 
+
+
+            # -------------------------------------------------------
+            #           Step2:
+            # -------------------------------------------------------
+
+
             print('-' * 20 + 'Step 2 : Returns vs. latent feature similarity')
             print('-' * 25 + 'Transpose dataset')
             df_pct_change_transposed = df_pct_change.transpose()
@@ -406,6 +462,7 @@ if portfolio_optimization:
             num_stock = len(df_pct_change_transposed.columns)
             autoencoderTransposed = defineAutoencoder(num_stock=num_stock, encoding_dim=5, verbose=0)
 
+
             # train autoencoder
             print('-' * 25 + 'Train autoencoder model')
             autoencoderTransposed.fit(df_pct_change_transposed_normalised, df_pct_change_transposed_normalised,
@@ -414,7 +471,9 @@ if portfolio_optimization:
             # Get the latent feature vector
             print('-' * 25 + 'Get the latent feature vector')
             autoencoderTransposedLatent = Model(inputs=autoencoderTransposed.input,
-                                                outputs=autoencoderTransposed.get_layer('my_latent').output)
+                                                outputs=autoencoderTransposed.get_layer('Encoder_Input').output)
+            plot_model(autoencoderTransposedLatent, to_file='img/model_autoencoder_2.png', show_shapes=True,
+                       show_layer_names=True)
 
             # predict autoencoder model
             print('-' * 25 + 'Predict autoencoder model')
@@ -457,11 +516,14 @@ if portfolio_optimization:
 
                 print('-' * 30 + 'Plot top 5 most similar time series')
                 df_plot = df_similarity_top_n
+                #plt.figure()
+                #plt.rcParams["figure.figsize"] = (10, 7)
                 plt.figure(figsize=(11, 6))
-                for stock in df_plot['stock_name']:
-                    plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close', ), label=stock)
+                plt.box(False)
+                for stock in df_plot.index:
+                    plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close' ), label=stock)
 
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon = False)
                 plt.title('Top ' + str(top_n) + ' most similar stocks based on latent feature value')
                 plt.xlabel("Dates")
                 plt.ylabel("Stock Value")
@@ -470,10 +532,11 @@ if portfolio_optimization:
                 print('-' * 30 + 'Plot the 5 least similar time series')
                 df_plot = df_similarity_bottom_n
                 plt.figure(figsize=(11, 6))
-                for stock in df_plot['stock_name']:
-                    plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close', label=stock))
+                plt.box(False)
+                for stock in df_plot.index:
+                    plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close'), label=stock)
 
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon = False)
                 plt.title('Bottom ' + str(top_n) + ' most similar stocks based on latent feature value')
                 plt.xlabel("Dates")
                 plt.ylabel("Stock Value")
@@ -498,9 +561,14 @@ if portfolio_optimization:
 
             # remove very high values
             df_portfolio = df_portfolio[df_portfolio['recreation_error'] < df_portfolio['recreation_error'].quantile(0.99)]
+            df_portfolio = df_portfolio[
+                df_portfolio['similarity_score'] < df_portfolio['similarity_score'].quantile(0.99)]
+            df_portfolio = df_portfolio[
+                df_portfolio[avg_return_column] < df_portfolio[avg_return_column].quantile(0.95)]
+
 
             # calculate bins
-            df_portfolio['similarity_score_quartile'] = pd.qcut(df_portfolio.similarity_score, n_bins, precision=0)
+            df_portfolio['similarity_score_quartile'] = pd.qcut(df_portfolio.similarity_score, n_bins, precision=0, labels=False)
 
             # calculate return*recreation error
             df_scaler_recreation_error = preprocessing.MinMaxScaler()
@@ -526,14 +594,15 @@ if portfolio_optimization:
 
                 # Plot
                 fig, ax = plt.subplots(figsize=(10, 6))
+                plt.box(False)
                 for name, group in groups:
                     ax.plot(group.similarity_score, group[avg_return_column] * 100, marker='o', linestyle='', ms=12,
-                            label=name)
+                            label=name, alpha=0.5)
 
                 plt.title('Average retuns vs. similarity metric (latent feature values)')
-                plt.xlabel("Latent Feature Value")
+                plt.xlabel("Similarity Score")
                 plt.ylabel(avg_return_column)
-                ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+                ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                 plt.show()
 
                 print('-' * 25 + 'Plot results')
@@ -543,13 +612,14 @@ if portfolio_optimization:
 
                 # Plot
                 fig, ax = plt.subplots(figsize=(10, 6))
+                plt.box(False)
                 for name, group in groups:
-                    ax.plot(group.recreation_error, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label=name)
+                    ax.plot(group.recreation_error, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label=name, alpha=0.5)
 
                 plt.title('Average return vs. recreation error')
                 plt.xlabel("Recreation error")
                 plt.ylabel("average returns last 10 days in %")
-                ax.legend(loc='best')
+                ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                 plt.show()
 
                 df_plot = df_portfolio[df_portfolio[avg_return_column] > 0]
@@ -560,13 +630,14 @@ if portfolio_optimization:
 
                 # Plot
                 fig, ax = plt.subplots(figsize=(10, 6))
+                plt.box(False)
                 for name, group in groups:
-                    ax.plot(group.recreation_error, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label=name)
+                    ax.plot(group.recreation_error, group[avg_return_column] * 100, marker='o', linestyle='', ms=12, label= 'Group '+ str(name), alpha=0.5)
 
                 plt.title('Average return vs. recreation error by similarity quartiles (colors)')
                 plt.xlabel("Recreation error")
                 plt.ylabel("Average returns last 10 days in %")
-                ax.legend(title='Similarity Quartiles', loc='best')
+                ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                 plt.show()
 
             # merge the results
@@ -678,40 +749,85 @@ if portfolio_optimization:
         plt.savefig('img/backtest_results.png')
         plt.show()
 
-    """
-    # --------------------------------------------- #
-    #       WORK IN PROGRESS
-    # --------------------------------------------- #
+
+        # --------------------------------------------- #
+        #       WORK IN PROGRESS
+        # --------------------------------------------- #
+
+
+        # filtering out values with low variance in the last x days
+
+        df_result_filtered1 = copy.deepcopy(df_result_close)
+        df_result_filtered1 = df_result_filtered1.drop(columns=df_result_filtered1.columns[((df_result_filtered1.tail(300).diff(1)==0).mean() >= 0.8)],axis =1)
+        #df_result_filtered1 = df_result_filtered1.reset_index()
+
+        #df_result_filtered1 = df_result_filtered1.loc[:, df_result_filtered1.tail(100).var() != 0.0]
+
+        #df_result_filtered1 = df_result_filtered1.filter(like='_Close')[df_result.filter(like='_Close').tail(300) != 0]
+        res = df_result_filtered1.pct_change(1).mean()*100
+
+        #l_res = []
+        l_res_new = []
+        '''
+        for index, value in res.items():
+            if value >= 4 or value <= -4:
+                print(f"Index : {index}, Value : {value}")
+                l_res.append(index)
+        '''
+        l_res = res.index
+
+        [l_res_new.append(c.split('_')[0]) for c in l_res]
+        df_recreation_error_filtered  = df_recreation_error[df_recreation_error.index.isin(l_res_new)]
+
+        df_stable_stocks = df_recreation_error_filtered.sort_values(by=['recreation_error'],  ascending=True)
+        l_stable_stocks = np.array(df_stable_stocks.head(5).index)
+
+        df_unstable_stocks = df_recreation_error_filtered.sort_values(by=['recreation_error'], ascending=False)
+        l_unstable_stocks = np.array(df_unstable_stocks.head(5).index)
+
+        list = l_stable_stocks
+
+        plt.figure()
+        plt.rcParams["figure.figsize"] = (8, 14)
+        plt.title('Original versus autoencoded stock price for low recreation error')
+        plt.box(False)
+        fig, ax = plt.subplots(len(list), 1)
+
+        i = 0
+        for stock in list:
+            which_stock = df_pct_change.columns.get_loc(stock)
+            which_stock_name = df_pct_change.columns[which_stock,]
+
+            # now decoded last price plot
+            init = (df_result_close.iloc[0, which_stock])
+            stock_autoencoder_1 =  copy.deepcopy(reconstruct_real[:, which_stock])
+            stock_autoencoder_1 = (1 + reconstruct_real[:, which_stock]).cumprod() * init
+            stock_autoencoder_1[0] = init
+            stock_autoencoder_1
+
+            ## plot for comparison
+            ax[i].plot( df_result_close.iloc[1:, which_stock])
+            ax[i].plot(df_result_close.index[1:], stock_autoencoder_1[:])
+            ax[i].legend(['Original ' + str(which_stock_name), 'Autoencoded ' + str(which_stock_name)], frameon = False)
+
+            # set title
+            #plt.set_title('Original stock price [{}] versus autoencoded stock price '.format(column), fontsize=fontsize)
+
+            ax[i].spines['top'].set_visible(False)
+            ax[i].spines['right'].set_visible(False)
+            ax[i].spines['left'].set_visible(False)
+            ax[i].spines['bottom'].set_visible(False)
+
+            ax[i].axes.get_xaxis().set_visible(False)
+
+
+            i = i +1
+
+        plt.xticks(fontsize=fontsize)
+        plt.yticks(fontsize=fontsize)
+        plt.show()
 
 
 
 
-    which_stock1 = 11
-    which_stock2 = 45
 
-    # now decoded last price plot
-    stock_autoencoder_1 = copy.deepcopy(reconstruct_real[:, which_stock1])
-    stock_autoencoder_1[0] = 0
-    stock_autoencoder_1 = stock_autoencoder_1.cumsum()
-    stock_autoencoder_1 += (df_pct_change.iloc[0, which_stock1])
-
-    # now decoded last price plot
-    stock_autoencoder_2 = copy.deepcopy(reconstruct_real[:, which_stock2])
-    stock_autoencoder_2[0] = 0
-    stock_autoencoder_2 = stock_autoencoder_2.cumsum()
-    stock_autoencoder_2 += (df_pct_change.iloc[0, which_stock2])
-
-
-
-    ## plot for comparison
-
-    plt.figure(figsize=(20, 5))
-    plt.plot(df_pct_change.index, df_result_close.iloc[:, which_stock1], color='b')
-    plt.plot(df_pct_change.index, df_result_close.iloc[:, which_stock2], color='r')
-    #plt.plot(df_pct_change.index, stock_autoencoder_1, color='y')
-    plt.legend(['Original' + str(which_stock1), 'Original' + str(which_stock2)])
-    plt.xticks(fontsize=18)
-    plt.yticks(fontsize=16)
-    plt.show()
-
-    """

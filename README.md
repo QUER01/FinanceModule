@@ -1,0 +1,1 @@
+https://www.kaggle.com/ehallmar/daily-historical-stock-prices-1970-2018/version/1
