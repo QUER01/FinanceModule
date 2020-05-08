@@ -287,7 +287,8 @@ def getLatentFeaturesSimilariryDF(df_pct_change, latent_features):
     stocks_latent_feature = []
     array = []
     num_columns = latent_features.shape[0]
-    for i in range(0, num_columns - 1):
+    #for i in range(0, num_columns - 1):
+    for i in range(0, num_columns ):
         l2norm = np.linalg.norm(latent_features[i, :])  # 2 norm difference
         array.append(float(l2norm))
 
