@@ -191,8 +191,8 @@ def defineAutoencoder(num_stock, encoding_dim = 5, verbose=0):
     input = Input(shape=(num_stock,))
 
     encoded = Dense(encoding_dim, kernel_regularizer=regularizers.l2(0.00001),name ='Encoder_Input')(input)
-    encoded = Activation("relu", name='Encoder_Activation_function')(encoded)
-    encoded = Dropout(0.2, name='Encoder_Dropout')(encoded)
+    #encoded = Activation("relu", name='Encoder_Activation_function')(encoded)
+    #encoded = Dropout(0.2, name='Encoder_Dropout')(encoded)
 
     decoded = Dense(num_stock, kernel_regularizer=regularizers.l2(0.00001), name ='Decoder_Input')(encoded)  # see 'Stacked Auto-Encoders' in paper
     decoded = Activation("linear", name='Decoder_Activation_function')(decoded)
@@ -259,12 +259,13 @@ def getAverageReturnsDF(stock_names , df_pct_change, df_result_close,df_original
     return df
 
 
-def getReconstructionErrorsDF(df_pct_change, reconstructed_data):
 
+
+def getReconstructionErrorsDF(df_pct_change, reconstructed_data):
     array = []
     stocks_ranked = []
     num_columns = reconstructed_data.shape[1]
-    for i in range(0, num_columns-1):
+    for i in range(0, num_columns):
         diff = np.linalg.norm((df_pct_change.iloc[:, i] - reconstructed_data[:, i]))  # 2 norm difference
         array.append(float(diff))
 
@@ -378,3 +379,89 @@ def calcMarkowitzPortfolio(df, budget):
     discrete_allocation, discrete_leftover = da.lp_portfolio()
 
     return discrete_allocation, discrete_leftover, weights, cleaned_weights
+
+
+
+
+
+def calc_delta_matrix(self):
+    numeric_df = self._get_numeric_data()
+    cols = self.shape[0]
+    idx = numeric_df.index
+    mat = numeric_df.values
+
+    K = cols
+    delta_mat = np.empty((K, K), dtype=float)
+    mask = np.isfinite(mat)
+    for i, ac in enumerate(mat):
+        for j, bc in enumerate(mat):
+            if i > j:
+                continue
+
+            valid = mask[i] & mask[j]
+            if i == j:
+                c = 0
+            elif not valid.all():
+                c = ac[valid] - bc[valid]
+            else:
+                c = ac - bc
+            delta_mat[i, j] = c
+            delta_mat[j, i] = c
+
+    df_delta_mat = pd.DataFrame(data=delta_mat, columns=idx, index=idx)
+
+    return df_delta_mat
+
+
+
+def column(matrix, i):
+    return [row[i] for row in matrix]
+
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+
+
+def generate_outlier_series(median=630, err=12, outlier_err=100, size=80, outlier_size=10):
+    errs = err * np.random.rand(size) * np.random.choice((-1, 1), size)
+    data = median + errs
+
+    lower_errs = outlier_err * np.random.rand(outlier_size)
+    lower_outliers = median - err - lower_errs
+
+    upper_errs = outlier_err * np.random.rand(outlier_size)
+    upper_outliers = median + err + upper_errs
+
+    data = np.concatenate((data, lower_outliers, upper_outliers))
+    np.random.shuffle(data)
+
+    return data
+
+
+# Test case 1
+test_df = pd.DataFrame(data={"a":[ 1,2,3,4]})
+test_df_change = test_df.pct_change(1)
+
+'''
+#Test Case 2
+test_df = pd.DataFrame(data={"a":[-1,-2,-3,-4]})
+test_df_change = test_df.pct_change(1)
+
+# Teast Case 3
+test_df = pd.DataFrame(data={"a":[1,0, 1,2,3,4]})
+test_df_change = test_df.pct_change(1)
+'''
+
+def convert_relative_changes_to_absolute_values(relative_values, initial_value):
+    reconstructed_series = (1 + relative_values).cumprod() * initial_value
+    reconstructed_series.iloc[0] =initial_value
+
+    return reconstructed_series
+
+
+reconstructed_series =convert_relative_changes_to_absolute_values(relative_values=test_df_change, initial_value=test_df.iloc[0,0])
+
