@@ -44,25 +44,42 @@ print('-' * 50)
 print('PART I: Timeseries Cleaning')
 print('-' * 50)
 
-# parameters
+# general parameters
+fontsize = 12
+parallel_processes = multiprocessing.cpu_count() - 1
+
+# script parameters
+test_setting = False
+plot_results = True
+stock_selection = True
+timeseries_evaluation = False
+timeseries_forecasting =False
+portfolio_optimization = True
+
+# 0 Data Preparation
 history_points = 150
 test_split = 0.9
 n_forecast = 10
-n_tickers = 1000
+n_tickers = 6000
 n_days = 250 * 4
 sectors = ['FINANCE', 'CONSUMER SERVICES', 'TECHNOLOGY',
            'CAPITAL GOODS', 'BASIC INDUSTRIES', 'HEALTH CARE',
            'CONSUMER DURABLES', 'ENERGY', 'TRANSPORTATION', 'CONSUMER NON-DURABLES']
+
+
+# 1. Selection of least volatile stocks using autoencoders
+hidden_layers = 5
+batch_size = 500
+epochs = 500
+stock_selection_number = 500
+
+# 2. Forecasting using recurrent neural networks
 backtest_days = 70
 scaled_mse_arr = []
-plot_results = True
-timeseries_evaluation = False
-timeseries_forecasting =False
-portfolio_optimization = True
-test_setting = True
-parallel_processes = multiprocessing.cpu_count() - 1
 
-fontsize = 12
+if test_setting:
+    d = 5
+    number_of_stocks = 960
 
 
 """
@@ -76,6 +93,8 @@ transformDataset( input_path='data/historical_stock_prices.csv', input_sep=','
 
 print('-' * 5 + 'Loading the dataset from disk')
 df_original = pd.read_csv('data/historical_stock_prices_filtered.csv', sep=';', index_col='date')
+#df_original = df_original.iloc[0:100]
+
 df_original.index = pd.to_datetime(df_original.index)
 
 
@@ -295,14 +314,84 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
         # collect and remove variables from garbage colector and thereby free up memory
         gc.collect()
 
+# 1. Selection of least volatile stocks using autoencoders
+if stock_selection:
 
 
+    ## Deep Portfolio
+    print('-' * 15 + 'PART IV: Autoencoder Deep Portfolio Optimization')
+
+    print('-' * 20 + 'Create dataset')
+    df_result_close = df_original.filter(like='Close', axis=1)
+    if test_setting:
+        df_result_close = df_result_close.iloc[:, 0:number_of_stocks]
+
+    new_columns = []
+    [new_columns.append(c.split('_')[0]) for c in df_result_close.columns]
+    df_result_close.columns = new_columns
+    df_result_close = df_result_close.dropna(axis=1, how='any', thresh=0.90 * len(df_original))
+
+    print('-' * 20 + 'Transform dataset')
+    df = df_result_close
+
+    df_pct_change = df_result_close.pct_change(1).astype(float)
+    df_pct_change = df_pct_change.replace([np.inf, -np.inf], np.nan)
+    df_pct_change = df_pct_change.fillna(method='ffill')
+    # the percentage change function will make the first two rows equal to nan
+    df_pct_change = df_pct_change.tail(len(df_pct_change) - 2)
+
+    # remove columns where there is no change over a longer time period
+    df_pct_change = df_pct_change[df_pct_change.columns[((df_pct_change == 0).mean() <= 0.05)]]
+
+    # -------------------------------------------------------
+    #           Step1: Recreation Error
+    # -------------------------------------------------------
+    print('-' * 20 + 'Step 1 : Returns vs. recreation error (recreation_error)')
+    print('-' * 25 + 'Transform dataset with MinMax Scaler')
+    df_scaler = preprocessing.MinMaxScaler()
+    df_pct_change_normalised = df_scaler.fit_transform(df_pct_change)
+
+    # define autoencoder
+    print('-' * 25 + 'Define autoencoder model')
+    num_stock = len(df_pct_change.columns)
+    autoencoder = defineAutoencoder(num_stock=num_stock, encoding_dim=hidden_layers, verbose=0)
+    plot_model(autoencoder, to_file='img/model_autoencoder_1.png', show_shapes=True,
+               show_layer_names=True)
+
+    # train autoencoder
+    print('-' * 25 + 'Train autoencoder model')
+    autoencoder.fit(df_pct_change_normalised, df_pct_change_normalised, shuffle=False, epochs=epochs,
+                    batch_size=batch_size,
+                    verbose=0)
+
+    # predict autoencoder
+    print('-' * 25 + 'Predict autoencoder model')
+    reconstruct = autoencoder.predict(df_pct_change_normalised)
+
+    # Inverse transform dataset with MinMax Scaler
+    print('-' * 25 + 'Inverse transform dataset with MinMax Scaler')
+    reconstruct_real = df_scaler.inverse_transform(reconstruct)
+    df_reconstruct_real = pd.DataFrame(data=reconstruct_real, columns=df_pct_change.columns)
+
+    print('-' * 25 + 'Calculate L2 norm as reconstruction loss metric')
+    df_recreation_error = getReconstructionErrorsDF(df_pct_change=df_pct_change
+                                                    , reconstructed_data=reconstruct_real)
+
+
+
+    filtered_stocks = df_recreation_error.head(stock_selection_number).index
+    df_result_close_filtered = df_result_close[filtered_stocks]
+    df_result_close_filtered.to_csv('data/df_result_close_filtered.csv', sep=';')
+
+
+# 2. Forecasting using recurrent neural networks
 if timeseries_forecasting:
     #for d in range(8, 16)[::-1]:
     for d in range(int(backtest_days/n_forecast)+1)[::-1]:
         if d != 0:
             print('-' * 5 + 'Backtest Iteration ' + str(d))
-            df = df_original.head(len(df_original) - n_forecast * d)
+            df_result_close_filtered = pd.read_csv('data/df_result_close_filtered.csv', sep=';')
+            df = df_result_close_filtered.head(len(df_result_close_filtered) - n_forecast * d)
 
             print('-' * 5 + 'Starting for loop over all tickers')
             # for i in range(0,len(l_tickers_unique)):
@@ -362,7 +451,8 @@ if timeseries_forecasting:
                 df_scaled_mse.to_csv('data/df_scaled_mse_' + str(d) + '.csv', sep=';')
 
 # End of for loops
-
+# 3. Calculating stock risk for portfolio diversification
+# 4.Portfolio optimization using linear programming
 if portfolio_optimization:
 
     new_columns = []
@@ -388,18 +478,11 @@ if portfolio_optimization:
     budget = 100000
     n_bins = 10
 
-    hidden_layers = 5
-    batch_size = 500
-    epochs = 500
+
 
     for d in range(int(backtest_days / n_forecast) + 1)[::-1]:
-        if test_setting:
-            d = 5
-            number_of_stocks = 960
+
         if d != 0:
-
-
-
 
             print('-' * 5 + 'Backtest Iteration ' + str(d))
             df_result = pd.read_csv('data/df_result_' + str(d) + '.csv', sep=';', index_col='Unnamed: 0',
@@ -430,40 +513,6 @@ if portfolio_optimization:
             # remove columns where there is no change over a longer time period
             df_pct_change = df_pct_change[df_pct_change.columns[((df_pct_change == 0).mean() <= 0.05)]]
 
-
-
-            # -------------------------------------------------------
-            #           Step1: Recreation Error
-            # -------------------------------------------------------
-            print('-' * 20 + 'Step 1 : Returns vs. recreation error (recreation_error)')
-            print('-' * 25 + 'Transform dataset with MinMax Scaler')
-            df_scaler = preprocessing.MinMaxScaler()
-            df_pct_change_normalised = df_scaler.fit_transform(df_pct_change)
-
-            # define autoencoder
-            print('-' * 25 + 'Define autoencoder model')
-            num_stock = len(df_pct_change.columns)
-            autoencoder = defineAutoencoder(num_stock=num_stock, encoding_dim=hidden_layers, verbose=0)
-            plot_model(autoencoder, to_file='img/model_autoencoder_1.png', show_shapes=True,
-                       show_layer_names=True)
-
-            # train autoencoder
-            print('-' * 25 + 'Train autoencoder model')
-            autoencoder.fit(df_pct_change_normalised, df_pct_change_normalised, shuffle=False, epochs=epochs, batch_size=batch_size,
-                            verbose=0)
-
-            # predict autoencoder
-            print('-' * 25 + 'Predict autoencoder model')
-            reconstruct = autoencoder.predict(df_pct_change_normalised)
-
-            # Inverse transform dataset with MinMax Scaler
-            print('-' * 25 + 'Inverse transform dataset with MinMax Scaler')
-            reconstruct_real = df_scaler.inverse_transform(reconstruct)
-            df_reconstruct_real = pd.DataFrame(data=reconstruct_real, columns=df_pct_change.columns)
-
-            print('-' * 25 + 'Calculate L2 norm as reconstruction loss metric')
-            df_recreation_error = getReconstructionErrorsDF(df_pct_change=df_pct_change
-                                                                  , reconstructed_data=reconstruct_real )
 
 
 
@@ -629,105 +678,101 @@ if portfolio_optimization:
                 most_similar_stocks = True
 
                 example_stock_names = df_pct_change.columns  # 'AMZN'
-                #for example_stock_name in example_stock_names[0:10]:
+                for example_stock_name in example_stock_names[0:30]:
 
-                example_stock_name = 'GOOGL'
-                top_n = 10
+                    example_stock_name =  'MSFT'#'AAPL'#'AMZN' # 'GOOGL'
+                    top_n = 10
 
-                df_pct_change_corr = df_pct_change.corr()
-                df_pct_change_corr_most_example = df_pct_change_corr[[example_stock_name]].sort_values(
-                    by=[example_stock_name], ascending=False).head(top_n)
-                df_pct_change_corr_least_example = df_pct_change_corr[[example_stock_name]].sort_values(
-                    by=[example_stock_name], ascending=False).tail(top_n)
+                    df_pct_change_corr = df_pct_change.corr()
+                    df_pct_change_corr_most_example = df_pct_change_corr[[example_stock_name]].sort_values(
+                        by=[example_stock_name], ascending=False).head(top_n)
+                    df_pct_change_corr_least_example = df_pct_change_corr[[example_stock_name]].sort_values(
+                        by=[example_stock_name], ascending=False).tail(top_n)
 
-                if least_similar_stocks:
-                    df_plot = df_pct_change_corr_least_example
-                    type = 'least'
+                    df_similarity_most_example = df_similarity[[example_stock_name]].sort_values(
+                        by=[example_stock_name],
+                        ascending=False).head(top_n)
+                    df_similarity_least_example = df_similarity[[example_stock_name]].sort_values(
+                        by=[example_stock_name],
+                        ascending=False).tail(top_n)
 
-                if most_similar_stocks:
-                    df_plot = df_pct_change_corr_most_example
-                    type = 'most'
 
-                plt.figure(figsize=(11, 6))
-                plt.box(False)
-                for stock in df_plot.index:
-                    plt.plot(df_pct_change.index, df_pct_change[stock], label=stock)
 
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
-                plt.title('Top ' + str(
-                    top_n) +' ' + type + ' similar stocks based on covariance value for stock ' + example_stock_name)
-                plt.xlabel("Dates")
-                plt.ylabel("Stock Value")
-                plt.show()
+                    least_stock_cv = df_pct_change_corr_least_example.head(1).index.values[0]
+                    most_stock_cv = df_pct_change_corr_most_example.iloc[[1]].index.values[0]
+
+                    least_stock_ae = df_similarity_least_example.head(1).index.values[0]
+                    most_stock_ae = df_similarity_most_example.iloc[[1]].index.values[0]
 
 
 
 
+                    # Plot original series for comparison
+                    plt.figure()
+                    plt.rcParams["figure.figsize"] = (18, 10)
+                    plt.box(False)
+                    fig, ((ax1, ax2),(ax3, ax4 ), (ax5,ax6)) = plt.subplots(3, 2)
+                    #fig.tight_layout(pad=10.0)
+                    fig.suptitle('Baseline stock: ' + example_stock_name + ' compared to least (left) and most (right) related stocks', y=1)
+
+                    ax1.plot(df_result_close.index, df_result_close[example_stock_name], label=example_stock_name)
+                    ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax1.spines['top'].set_visible(False)
+                    ax1.spines['right'].set_visible(False)
+                    ax1.spines['left'].set_visible(False)
+                    ax1.spines['bottom'].set_visible(False)
+
+                    ax3.plot(df_result_close.index, df_result_close[least_stock_cv], label=least_stock_cv + '(covariance)')
+                    ax3.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax3.spines['top'].set_visible(False)
+                    ax3.spines['right'].set_visible(False)
+                    ax3.spines['left'].set_visible(False)
+                    ax3.spines['bottom'].set_visible(False)
+
+                    ax5.plot(df_result_close.index, df_result_close[least_stock_ae], label=least_stock_ae + '(latent feature)')
+                    ax5.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax5.spines['top'].set_visible(False)
+                    ax5.spines['right'].set_visible(False)
+                    ax5.spines['left'].set_visible(False)
+                    ax5.spines['bottom'].set_visible(False)
+
+                    ax2.plot(df_result_close.index, df_result_close[example_stock_name], label=example_stock_name)
+                    ax2.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax2.spines['top'].set_visible(False)
+                    ax2.spines['right'].set_visible(False)
+                    ax2.spines['left'].set_visible(False)
+                    ax2.spines['bottom'].set_visible(False)
+
+                    ax4.plot(df_result_close.index, df_result_close[most_stock_cv],
+                             label=most_stock_cv + '(covariance)')
+                    ax4.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax4.spines['top'].set_visible(False)
+                    ax4.spines['right'].set_visible(False)
+                    ax4.spines['left'].set_visible(False)
+                    ax4.spines['bottom'].set_visible(False)
+
+                    ax6.plot(df_result_close.index, df_result_close[most_stock_ae],
+                             label=most_stock_ae + '(latent feature)')
+                    ax6.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax6.spines['top'].set_visible(False)
+                    ax6.spines['right'].set_visible(False)
+                    ax6.spines['left'].set_visible(False)
+                    ax6.spines['bottom'].set_visible(False)
+
+                    plt.xlabel("Dates")
+                    plt.ylabel("Stock Value")
+                    plt.show()
 
 
-                df_similarity_most_example = df_similarity[[example_stock_name]].sort_values(
-                    by=[example_stock_name],
-                    ascending=False).head(top_n)
-
-                df_similarity_least_example = df_similarity[[example_stock_name]].sort_values(
-                    by=[example_stock_name],
-                    ascending=False).tail(top_n)
-
-                if least_similar_stocks:
-                    df_plot = df_similarity_least_example
-                    type = 'least'
-
-                if most_similar_stocks:
-                    df_plot = df_similarity_most_example
-                    type = 'most'
-
-                plt.figure(figsize=(11, 6))
-                plt.box(False)
-                for stock_ae in df_plot.index:
-                    plt.plot(df_pct_change.index, df_pct_change[stock_ae], label=stock_ae)
-
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
-                plt.title('Top ' + str(
-                    top_n) + ' '+ type +' similar stocks based on latent feature value for stock ' + example_stock_name)
-                plt.xlabel("Dates")
-                plt.ylabel("Stock Value")
-                plt.show()
 
 
 
-
-
-
-
-
-                # Plot original series for comparison
-
-                plt.figure(figsize=(11, 6))
-                plt.box(False)
-                plt.plot(df_result_close.index, df_result_close[example_stock_name], label=example_stock_name)
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
-                plt.title('Baseline stock: ' + example_stock_name)
-                plt.xlabel("Dates")
-                plt.ylabel("Stock Value")
-                plt.show()
-
-                plt.figure(figsize=(11, 6))
-                plt.box(False)
-                plt.plot(df_result_close.index, df_result_close[stock], label=stock)
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
-                plt.title('Most similar stock based on correlation coefficient for stock ' + example_stock_name)
-                plt.xlabel("Dates")
-                plt.ylabel("Stock Value")
-                plt.show()
-
-                plt.figure(figsize=(11, 6))
-                plt.box(False)
-                plt.plot(df_result_close.index, df_result_close[stock_ae], label=stock_ae)
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
-                plt.title('Most similar stock based on latent feature value for stock ' + example_stock_name)
-                plt.xlabel("Dates")
-                plt.ylabel("Stock Value")
-                plt.show()
 
             # -------------------------------------------------------
             #           Step3: Markowitz Model
