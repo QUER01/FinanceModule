@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from keras.models import Model
 import numpy as np
 from tensorflow import set_random_seed
+from keras.callbacks import TensorBoard
 from keras.utils.vis_utils import  plot_model
 set_random_seed(4)
 from FinanceModule.util_forecasting_metrics import *
@@ -16,6 +17,7 @@ from FinanceModule.util import createDataset \
     , splitTrainTest \
     , defineModel \
     , defineAutoencoder \
+    , defineVariationalAutoencoder\
     , predictAutoencoder \
     , getLatentFeaturesSimilariryDF \
     , getReconstructionErrorsDF \
@@ -25,7 +27,8 @@ from FinanceModule.util import createDataset \
     , chunks\
     , fun_column\
     , calc_delta_matrix\
-    , convert_relative_changes_to_absolute_values
+    , convert_relative_changes_to_absolute_values\
+    , append_to_portfolio_results
 
 from FinanceModule.quandlModule import Quandl
 import copy
@@ -38,7 +41,12 @@ import gc
 from multiprocessing import Pool, TimeoutError, Process
 import multiprocessing
 
+#from pypfopt import Plotting, CLA
 #plt.xkcd()
+
+class MyException(Exception):
+    pass
+
 
 print('-' * 50)
 print('PART I: Timeseries Cleaning')
@@ -48,13 +56,22 @@ print('-' * 50)
 fontsize = 12
 parallel_processes = multiprocessing.cpu_count() - 1
 
+# indicate folder to save, plus other options
+date = datetime.now().strftime('%Y-%m-%d_%H_%M')
+tensorboard = TensorBoard(log_dir='./logs/run_' + date)
+# save it in your callback list, where you can include other callbacks
+callbacks_list = [tensorboard]
+
 # script parameters
 test_setting = False
-plot_results = True
+plot_results = False
 stock_selection = True
 timeseries_evaluation = False
-timeseries_forecasting =False
+timeseries_forecasting =True
 portfolio_optimization = True
+
+
+verbose = 0
 
 # 0 Data Preparation
 history_points = 150
@@ -143,11 +160,11 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
             # model architecture
             print('-' * 20 + 'Design the model')
             model = defineModel(ohlcv_histories_normalised=ohlcv_histories_normalised,
-                                technical_indicators=technical_indicators, verbose=0)
+                                technical_indicators=technical_indicators, verbose=verbose)
             # fit model
             print('-' * 20 + 'Fit the model')
             model.fit(x=[ohlcv_train, tech_ind_train], y=y_train, batch_size=32, epochs=50, shuffle=True,
-                      validation_split=0.1, verbose=0)
+                      validation_split=0.1, verbose=verbose)
             model.save('img/backtest_' + str(d) + '_' + column + '_eval_model.h5')
 
             # evaluate model
@@ -228,12 +245,12 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
             # model architecture
             print('-' * 25 + 'Design the model')
             model = defineModel(ohlcv_histories_normalised=ohlcv_histories_normalised,
-                                technical_indicators=technical_indicators, verbose=0)
+                                technical_indicators=technical_indicators, verbose=verbose)
             # fit model
             print('-' * 25 + 'Fit the model')
             model.fit(x=[ohlcv_histories_normalised, technical_indicators],
                       y=next_day_open_values_normalised,
-                      batch_size=32, epochs=50, shuffle=True, validation_split=0.1, verbose=0)
+                      batch_size=32, epochs=50, shuffle=True, validation_split=0.1, verbose=verbose)
 
             model.save('img/backtest_' + str(d) + '_' + column + '_forecasting_model.h5')
 
@@ -323,8 +340,10 @@ if stock_selection:
 
     print('-' * 20 + 'Create dataset')
     df_result_close = df_original.filter(like='Close', axis=1)
-    if test_setting:
-        df_result_close = df_result_close.iloc[:, 0:number_of_stocks]
+
+    # TODO REMOVE ME
+    #if test_setting:
+    #    df_result_close = df_result_close.iloc[:, 0:number_of_stocks]
 
     new_columns = []
     [new_columns.append(c.split('_')[0]) for c in df_result_close.columns]
@@ -354,7 +373,7 @@ if stock_selection:
     # define autoencoder
     print('-' * 25 + 'Define autoencoder model')
     num_stock = len(df_pct_change.columns)
-    autoencoder = defineAutoencoder(num_stock=num_stock, encoding_dim=hidden_layers, verbose=0)
+    autoencoder = defineAutoencoder(num_stock=num_stock, encoding_dim=hidden_layers, verbose=verbose)
     plot_model(autoencoder, to_file='img/model_autoencoder_1.png', show_shapes=True,
                show_layer_names=True)
 
@@ -362,7 +381,7 @@ if stock_selection:
     print('-' * 25 + 'Train autoencoder model')
     autoencoder.fit(df_pct_change_normalised, df_pct_change_normalised, shuffle=False, epochs=epochs,
                     batch_size=batch_size,
-                    verbose=0)
+                    verbose=verbose)
 
     # predict autoencoder
     print('-' * 25 + 'Predict autoencoder model')
@@ -398,8 +417,6 @@ if timeseries_forecasting:
             j = 0
             for j_val in l_tickers_unique_chunks:
 
-
-                print(j_val)
                 print('opening new pool: ' + str(j) + '/' + str(len(l_tickers_unique_chunks)))
                 pool = Pool(processes=parallel_processes)  # start 12 worker processes
                 i = 0
@@ -455,8 +472,13 @@ if timeseries_forecasting:
 # 4.Portfolio optimization using linear programming
 if portfolio_optimization:
 
+    portfolio_results = []
+    markowitz_allocation = []
+    df_results_markowitz_allocation = pd.DataFrame()
     new_columns = []
 
+
+    # TODO REMOVE ME
     profits_option_1 = []
     tickers_option_1 = []
 
@@ -468,16 +490,21 @@ if portfolio_optimization:
 
     profits_option_4 = []
     tickers_option_4 = []
+    # --
+
+
 
     avg_return_column = 'avg_returns_last50_days'
     avg_return_days = 50
-
     forecasting_days = 10
+
 
     n_stocks_per_bin = 2
     budget = 100000
     n_bins = 10
 
+    hidden_layers = 20
+    target_annual_return = 0.50
 
 
     for d in range(int(backtest_days / n_forecast) + 1)[::-1]:
@@ -485,6 +512,14 @@ if portfolio_optimization:
         if d != 0:
 
             print('-' * 5 + 'Backtest Iteration ' + str(d))
+            portfolio_results_temp = []
+
+            # get full dataset
+            if 'df_original' not in locals():
+                df_original = pd.read_csv('data/historical_stock_prices_filtered.csv', sep=';')
+                df_original.index = pd.to_datetime(df_original.date)
+
+            # get backtest iteration dataset with forecasted values
             df_result = pd.read_csv('data/df_result_' + str(d) + '.csv', sep=';', index_col='Unnamed: 0',
                                     parse_dates=True)
 
@@ -493,17 +528,28 @@ if portfolio_optimization:
 
             print('-' * 20 + 'Create dataset')
             df_result_close = df_result.filter(like='Close', axis=1)
+            df_original = df_original.filter(like='Close', axis=1)
+
             if test_setting:
                 df_result_close = df_result_close.iloc[:, 0:number_of_stocks]
 
             new_columns = []
             [new_columns.append(c.split('_')[0]) for c in df_result_close.columns ]
             df_result_close.columns = new_columns
-            df_result_close = df_result_close.dropna(axis=1, how='any', thresh=0.90 * len(df_result))
+
+            new_columns = []
+            [new_columns.append(c.split('_')[0]) for c in df_original.columns ]
+            df_original.columns = new_columns
+
+            print('-' * 20 + 'Data Cleaning: Check if all values are positive')
+            try:
+                assert len(df_result_close[df_result_close >= 0].dropna(axis=1).columns) == len(df_result_close.columns)
+            except Exception as exception:
+                # Output unexpected Exceptions.
+                print('Dataframe contains negative and zero numbers. Replacing them with 0')
+                df_result_close = df_result_close[df_result_close >= 0].dropna(axis=1)
 
             print('-' * 20 + 'Transform dataset')
-            df = df_result_close
-
             df_pct_change = df_result_close.pct_change(1).astype(float)
             df_pct_change = df_pct_change.replace([np.inf, -np.inf], np.nan)
             df_pct_change = df_pct_change.fillna(method='ffill')
@@ -511,7 +557,7 @@ if portfolio_optimization:
             df_pct_change = df_pct_change.tail(len(df_pct_change) - 2)
 
             # remove columns where there is no change over a longer time period
-            df_pct_change = df_pct_change[df_pct_change.columns[((df_pct_change == 0).mean() <= 0.05)]]
+            #df_pct_change = df_pct_change[df_pct_change.columns[((df_pct_change == 0).mean() <= 0.05)]]
 
 
 
@@ -532,13 +578,13 @@ if portfolio_optimization:
             # define autoencoder
             print('-' * 25 + 'Define autoencoder model')
             num_stock = len(df_pct_change_transposed.columns)
-            autoencoderTransposed = defineAutoencoder(num_stock=num_stock, encoding_dim=hidden_layers+30, verbose=0)
+            autoencoderTransposed = defineAutoencoder(num_stock=num_stock, encoding_dim=hidden_layers, verbose=verbose)
 
 
             # train autoencoder
             print('-' * 25 + 'Train autoencoder model')
             autoencoderTransposed.fit(df_pct_change_transposed_normalised, df_pct_change_transposed_normalised,
-                                      shuffle=False, epochs=epochs, batch_size=batch_size, verbose=0)
+                                      shuffle=False, epochs=epochs, batch_size=batch_size, verbose=verbose)
 
             # Get the latent feature vector
             print('-' * 25 + 'Get the latent feature vector')
@@ -555,19 +601,66 @@ if portfolio_optimization:
             df_similarity = getLatentFeaturesSimilariryDF(df_pct_change=df_pct_change
                                                         , latent_features=latent_features )
 
-            df_similarity = pd.DataFrame(latent_features.T, columns=df_pct_change.columns).corr()
+            df_latent_feature = pd.DataFrame(latent_features.T, columns=df_pct_change.columns)
+            df_similarity_cov = df_latent_feature.cov()
+            df_similarity_cor = df_latent_feature.corr()
 
+
+
+            # -------------------------------------------------------
+            #           Step2: Variational Autoencoder Model
+            # -------------------------------------------------------
+
+            # NEW
+            print('-' * 25 + 'Apply MinMax Scaler')
+            df_scaler = preprocessing.MinMaxScaler()
+            df_pct_change_normalised = df_scaler.fit_transform(df_pct_change)
+
+            print('-' * 25 + 'Define variables')
+            x = np.array(df_pct_change_normalised)
+            input_dim = x.shape[1]
+            timesteps = x.shape[0]
+
+            print('-' * 25 + 'Define Variational Autoencoder Model')
+            var_autoencoder, var_decoder, var_encoder = defineVariationalAutoencoder(original_dim = input_dim,
+                                 intermediate_dim = 300,
+                                 latent_dim= 2)
+
+            plot_model(var_encoder, to_file='img/model_var_autoencoder_encoder.png', show_shapes=True,
+                       show_layer_names=True)
+            plot_model(var_decoder, to_file='img/model_var_autoencoder_decoder.png', show_shapes=True,
+                       show_layer_names=True)
+
+            print('-' * 25 + 'Fit variational autoencoder model')
+            var_autoencoder.fit(x, x, callbacks=callbacks_list,  batch_size=64, epochs=epochs, verbose=verbose)
+            reconstruct = var_autoencoder.predict(x, batch_size=batch_size)
+
+            print('-' * 25 + 'Inverse transform dataset with MinMax Scaler')
+            reconstruct_real = df_scaler.inverse_transform(reconstruct)
+            df_var_autoencoder_reconstruct_real = pd.DataFrame(data=reconstruct_real, columns=df_pct_change.columns)
+
+            print('-' * 25 + 'Calculate L2 norm as reconstruction loss metric')
+            df_recreation_error = getReconstructionErrorsDF(df_pct_change=df_pct_change
+                                                            , reconstructed_data=reconstruct_real)
+            df_var_autoencoder_reconstruct_real_cov = df_var_autoencoder_reconstruct_real.cov()
+
+            # NEW END
+            # TODO REMOVE ME
+            '''
             df_returns = getAverageReturnsDF(stock_names=df_pct_change.columns
                                              , df_pct_change=df_pct_change
                                              , df_result_close=df_result_close
                                              , df_original=df_original
                                              , forecasting_days=forecasting_days
                                              , backtest_iteration=d)
+            '''
+
+            # calculate covariance matrix of stocks
+            df_pct_change_corr = df_pct_change.corr()
+            df_pct_change_cov = df_pct_change.cov()
 
 
-
-
-            # plots for 1. Selection of least volatile stocks using autoencoders
+            # plots for 1. Selection of least volatile stocks using autoencoder latent feature value
             if plot_results:
                 stable_stocks = False
                 unstable_stocks = True
@@ -593,7 +686,6 @@ if portfolio_optimization:
 
 
 
-
                 df_unstable_stocks = df_recreation_error.sort_values(by=['recreation_error'], ascending=False).head(number_of_stable_unstable_stocks)
                 df_unstable_stocks['recreation_error_class'] = 'bottom ' + str(number_of_stable_unstable_stocks)
                 print(df_unstable_stocks.head(5))
@@ -611,10 +703,6 @@ if portfolio_optimization:
                 plt.ylabel("Returns")
                 plt.show()
 
-
-
-
-
                 if stable_stocks:
                     print('Plotting stable stocks')
                     list = l_stable_stocks
@@ -624,8 +712,6 @@ if portfolio_optimization:
                     print('Plotting unstable stocks')
                     list = l_unstable_stocks
                     title = 'Original versus autoencoded stock price for high recreation error (unstable stocks)'
-
-
 
 
                 plt.figure()
@@ -672,27 +758,25 @@ if portfolio_optimization:
                 plt.yticks(fontsize=fontsize)
                 plt.show()
 
-            # Plots for 3. Calculating stock risk for portfolio diversification
-            if plot_results:
+                # Plots for 3. Calculating stock risk for portfolio diversification
                 least_similar_stocks = False
                 most_similar_stocks = True
 
                 example_stock_names = df_pct_change.columns  # 'AMZN'
                 for example_stock_name in example_stock_names[0:30]:
 
-                    example_stock_name =  'MSFT'#'AAPL'#'AMZN' # 'GOOGL'
+                    example_stock_name =  'GOOGL' #'MSFT'#'AAPL'#'AMZN' #
                     top_n = 10
 
-                    df_pct_change_corr = df_pct_change.corr()
                     df_pct_change_corr_most_example = df_pct_change_corr[[example_stock_name]].sort_values(
                         by=[example_stock_name], ascending=False).head(top_n)
                     df_pct_change_corr_least_example = df_pct_change_corr[[example_stock_name]].sort_values(
                         by=[example_stock_name], ascending=False).tail(top_n)
 
-                    df_similarity_most_example = df_similarity[[example_stock_name]].sort_values(
+                    df_similarity_most_example = df_similarity_cor[[example_stock_name]].sort_values(
                         by=[example_stock_name],
                         ascending=False).head(top_n)
-                    df_similarity_least_example = df_similarity[[example_stock_name]].sort_values(
+                    df_similarity_least_example = df_similarity_cor[[example_stock_name]].sort_values(
                         by=[example_stock_name],
                         ascending=False).tail(top_n)
 
@@ -771,6 +855,37 @@ if portfolio_optimization:
 
 
 
+                    '''
+                    # Plots for 3. compare original timeseries with latent features
+                    plt.figure()
+                    plt.rcParams["figure.figsize"] = (18, 10)
+                    plt.box(False)
+                    fig, ((ax1),(ax2)) = plt.subplots(2, 1)
+                    # fig.tight_layout(pad=10.0)
+                    fig.suptitle(
+                        'Orignal stock (top): ' + example_stock_name + ' compared to least (left) and most (right) related stocks',
+                        y=1)
+
+                    ax1.plot(df_pct_change.index, df_pct_change[example_stock_name], label=example_stock_name)
+                    ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax1.spines['top'].set_visible(False)
+                    ax1.spines['right'].set_visible(False)
+                    ax1.spines['left'].set_visible(False)
+                    ax1.spines['bottom'].set_visible(False)
+
+                    ax2.plot(df_latent_feature.index, df_latent_feature[example_stock_name], label=example_stock_name)
+                    ax2.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+                    # removing all borders
+                    ax2.spines['top'].set_visible(False)
+                    ax2.spines['right'].set_visible(False)
+                    ax2.spines['left'].set_visible(False)
+                    ax2.spines['bottom'].set_visible(False)
+
+                    plt.xlabel("Dates")
+                    plt.ylabel("Stock Value")
+                    plt.show()
+                    '''
 
 
 
@@ -778,51 +893,150 @@ if portfolio_optimization:
             #           Step3: Markowitz Model
             # -------------------------------------------------------
 
-            print('-' * 20 + 'Step 3: Markowitz model')
-            discrete_allocation, discrete_leftover, weights, cleaned_weights = calcMarkowitzPortfolio(df=df_result_close,
-                                                                                                        budget=budget)
-            df_markowitz_allocation = pd.DataFrame(discrete_allocation.items(),  columns=['stock_name','bought_volume'])
-            df_markowitz_allocation = df_markowitz_allocation.set_index('stock_name')
+            print('-' * 20 + 'Step 3: Create dataset')
+            df_result_close = df_result_close[df_pct_change.columns]
+
+            print('-' * 20 + 'Step 3: Markowitz model without forecast values')
+            discrete_allocation, discrete_leftover, weights, cleaned_weights, mu, S, results = calcMarkowitzPortfolio(
+                 df=df_result_close.head(len(df_result_close)-n_forecast  )
+                , budget=budget
+                , S=df_pct_change_cov
+                , type='max_sharpe'
+                , target=target_annual_return)
+            df_markowitz_allocation_without_forecast = pd.DataFrame(discrete_allocation.items(),
+                                                        columns=['stock_name', 'bought_volume_without_forecast'])
+            df_markowitz_allocation_without_forecast = df_markowitz_allocation_without_forecast.set_index('stock_name')
+
+            append_to_portfolio_results(array=portfolio_results_temp,
+                                        d=d,
+                                        portfolio_type='markowitz_portfolio_without_forecast',
+                                        discrete_allocation=discrete_allocation,
+                                        results=results)
+
+
+            print('-' * 20 + 'Step 3: Markowitz model with forecast')
+            discrete_allocation, discrete_leftover, weights, cleaned_weights, mu, S, results = calcMarkowitzPortfolio(df=df_result_close
+                                                                                                      ,budget=budget
+                                                                                                      ,S = df_pct_change_cov
+                                                                                                      ,type = 'max_sharpe'
+                                                                                                      ,target = target_annual_return)
+            df_markowitz_allocation_with_forecast = pd.DataFrame(discrete_allocation.items(),  columns=['stock_name','bought_volume_with_forecast'])
+            df_markowitz_allocation_with_forecast = df_markowitz_allocation_with_forecast.set_index('stock_name')
+
+            append_to_portfolio_results(array = portfolio_results_temp,
+                                         d =d,
+                                         portfolio_type= 'markowitz_portfolio_with_forecast',
+                                         discrete_allocation=discrete_allocation,
+                                         results=results)
+
+
+            #cla = CLA(expected_returns=mu, cov_matrix=S, weight_bounds=(0, 1))
+            #Plotting.plot_efficient_frontier(cla, points=100, show_assets=True)
+
+            print('-' * 20 + 'Step 3: Markowitz model with cleaned covariance matrix')
+            discrete_allocation, discrete_leftover, weights, cleaned_weights,mu, S, results = calcMarkowitzPortfolio(df=df_result_close
+                                                                                                      ,budget=budget
+                                                                                                      ,S = df_var_autoencoder_reconstruct_real_cov
+                                                                                                      ,type = 'max_sharpe'
+                                                                                                      ,target = target_annual_return
+                                                                                                      ,cov_type = 'adjusted-disabled')
+            df_markowitz_allocation_var_autoencoder = pd.DataFrame(discrete_allocation.items(),  columns=['stock_name','bought_volume_with_forecast_cleaned'])
+            df_markowitz_allocation_var_autoencoder = df_markowitz_allocation_var_autoencoder.set_index('stock_name')
+
+            append_to_portfolio_results(array=portfolio_results_temp,
+                                        d=d,
+                                        portfolio_type='markowitz_portfolio_with_forecast_and adjusted covariance_matrix',
+                                        discrete_allocation=discrete_allocation,
+                                        results=results)
 
 
 
-            if plot_results:
-                print('-' * 25 + 'Plot the results')
-                top_n = 5
-                df_similarity_top_n = df_similarity.iloc[0:top_n, :]
-                df_recreation_error_top_n = df_recreation_error.iloc[0:top_n, :]
+            print('-' * 20 + 'Step 3: Markowitz model with latent features')
+            discrete_allocation, discrete_leftover, weights, cleaned_weights,mu, S, results = calcMarkowitzPortfolio(df=df_result_close
+                                                                                                      ,budget=budget
+                                                                                                      ,S = df_similarity_cov
+                                                                                                      ,type = 'max_sharpe'
+                                                                                                      ,target = target_annual_return
+                                                                                                      ,cov_type = 'adjusted-disabled')
+            df_markowitz_allocation_latent_feature = pd.DataFrame(discrete_allocation.items(),  columns=['stock_name','bought_volume_with_forecast_latent'])
+            df_markowitz_allocation_latent_feature = df_markowitz_allocation_latent_feature.set_index('stock_name')
 
-                bottom_n = 5
-                df_similarity_bottom_n = df_similarity.tail(bottom_n)
-                df_recreation_error_bottom_n = df_recreation_error.tail(bottom_n)
+            append_to_portfolio_results(array=portfolio_results_temp,
+                                        d=d,
+                                        portfolio_type='markowitz_portfolio_with_forecast_and_latent_features',
+                                        discrete_allocation=discrete_allocation,
+                                        results=results)
 
-                print('-' * 30 + 'Plot top 5 most similar time series')
-                df_plot = df_similarity_top_n
-                #plt.figure()
-                #plt.rcParams["figure.figsize"] = (10, 7)
-                plt.figure(figsize=(11, 6))
-                plt.box(False)
-                for stock in df_plot.index:
-                    plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close' ), label=stock)
 
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon = False)
-                plt.title('Top ' + str(top_n) + ' most similar stocks based on latent feature value')
-                plt.xlabel("Dates")
-                plt.ylabel("Stock Value")
-                plt.show()
 
-                print('-' * 30 + 'Plot the 5 least similar time series')
-                df_plot = df_similarity_bottom_n
-                plt.figure(figsize=(11, 6))
-                plt.box(False)
-                for stock in df_plot.index:
-                    plt.plot(df_result.index, df_result.filter(regex='^' + stock + '_Close'), label=stock)
+            #cla = CLA(expected_returns=mu, cov_matrix=S, weight_bounds=(0, 1))
+            #Plotting.plot_efficient_frontier(cla, points=100, show_assets=True)
 
-                plt.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon = False)
-                plt.title('Bottom ' + str(top_n) + ' most similar stocks based on latent feature value')
-                plt.xlabel("Dates")
-                plt.ylabel("Stock Value")
-                plt.show()
+            df_markowitz_allocation = df_markowitz_allocation_with_forecast.join(df_markowitz_allocation_without_forecast
+                                                                        , how='outer'
+                                                                        , lsuffix =''
+                                                                        , rsuffix='')
+            df_markowitz_allocation = df_markowitz_allocation.join(df_markowitz_allocation_var_autoencoder
+                                                                        , how='outer'
+                                                                        , lsuffix =''
+                                                                        , rsuffix='')
+
+            df_markowitz_allocation = df_markowitz_allocation.join(df_markowitz_allocation_latent_feature
+                                                                   ,how='outer'
+                                                                   ,lsuffix=''
+                                                                   ,rsuffix='')
+
+            df_result_close_buy_price = df_result_close.tail(n_forecast).head(1).transpose()
+            df_result_close_buy_price = df_result_close_buy_price.rename(columns={df_result_close_buy_price.columns[0]: "buy_price"})
+
+            df_result_close_predicted_price = df_result_close.tail(1).transpose()
+            df_result_close_predicted_price = df_result_close_predicted_price.rename(columns={df_result_close_predicted_price.columns[0]: "predicted_price"})
+
+            df_result_close_sell_price = df_original.head(len(df_original) - n_forecast * (d-1))
+            df_result_close_sell_price = df_result_close_sell_price.tail(1).transpose()
+            df_result_close_sell_price = df_result_close_sell_price.rename(columns={df_result_close_sell_price.columns[0]: "sell_price"})
+
+
+            df_markowitz_allocation = df_markowitz_allocation.join(df_result_close_buy_price, how ='left')
+            df_markowitz_allocation = df_markowitz_allocation.join(df_result_close_predicted_price, how='left')
+            df_markowitz_allocation = df_markowitz_allocation.join(df_result_close_sell_price, how='left')
+            df_markowitz_allocation['backtest_id'] = d
+
+            df_markowitz_allocation['delta'] = df_markowitz_allocation['sell_price'] - df_markowitz_allocation['buy_price']
+
+            df_markowitz_allocation['profit_without_forecast'] = df_markowitz_allocation['delta'] * df_markowitz_allocation['bought_volume_without_forecast']
+            df_markowitz_allocation['profit_with_forecast'] = df_markowitz_allocation['delta'] * df_markowitz_allocation[
+                'bought_volume_with_forecast']
+            df_markowitz_allocation['profit_with_forecast_cleaned'] = df_markowitz_allocation['delta'] * df_markowitz_allocation[
+                'bought_volume_with_forecast_cleaned']
+            df_markowitz_allocation['profit_with_forecast_latent'] = df_markowitz_allocation['delta'] * df_markowitz_allocation[
+                'bought_volume_with_forecast_latent']
+
+            df_results_markowitz_allocation = df_results_markowitz_allocation.append(df_markowitz_allocation)
+
+            portfolio_results_temp[0]['profit'] = np.sum(df_markowitz_allocation['profit_without_forecast'])
+            portfolio_results_temp[2]['profit'] = np.sum(df_markowitz_allocation['profit_with_forecast'])
+            portfolio_results_temp[3]['profit'] = np.sum(df_markowitz_allocation['profit_with_forecast_cleaned'])
+            portfolio_results_temp[4]['profit'] = np.sum(df_markowitz_allocation['profit_with_forecast_latent'])
+
+            portfolio_results.append(portfolio_results_temp)
+
+
+    df_results_portfolio = pd.DataFrame.from_dict(portfolio_results)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
             print('-' * 20 + 'Step 4: Create Portfolio ')
             print(

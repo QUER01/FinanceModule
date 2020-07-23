@@ -6,13 +6,20 @@ np.random.seed(4)
 from scipy.ndimage.interpolation import shift
 import pandas as pd
 from sklearn import preprocessing
-import numpy as np
 from pulp import *
+from lib.pypfopt_055.efficient_frontier import EfficientFrontier
+from lib.pypfopt_055 import base_optimizer, risk_models
+from lib.pypfopt_055 import expected_returns
+from lib.pypfopt_055.discrete_allocation import DiscreteAllocation, get_latest_prices
 
-from pypfopt.efficient_frontier import EfficientFrontier
-from pypfopt import risk_models
-from pypfopt import expected_returns
-from pypfopt.discrete_allocation import DiscreteAllocation, get_latest_prices
+
+import keras
+from keras.layers import Lambda, Input, Dense
+from keras.models import Model
+from keras.losses import mse, binary_crossentropy
+from keras import backend as K
+
+import numpy as np
 
 
 
@@ -206,6 +213,77 @@ def defineAutoencoder(num_stock, encoding_dim = 5, verbose=0):
 
     return autoencoder
 
+
+
+def defineVariationalAutoencoder(original_dim,
+                                 intermediate_dim,
+                                 latent_dim,
+                                 verbose=0):
+
+    input_shape = (original_dim,)
+
+    # Map inputs to the latent distribution parameters:
+    # VAE model = encoder + decoder
+    # build encoder model
+    inputs = Input(shape=input_shape, name='encoder_input')
+    x = Dense(intermediate_dim, activation='relu')(inputs)
+    z_mean = Dense(latent_dim, name='z_mean')(x)
+    z_log_var = Dense(latent_dim, name='z_log_var')(x)
+
+    # Use those parameters to sample new points from the latent space:
+    # reparameterization trick
+    # instead of sampling from Q(z|X), sample epsilon = N(0,I)
+    # z = z_mean + sqrt(var) * epsilon
+    def sampling(args):
+        """Reparameterization trick by sampling from an isotropic unit Gaussian.
+        # Arguments
+            args (tensor): mean and log of variance of Q(z|X)
+        # Returns
+            z (tensor): sampled latent vector
+        """
+
+        z_mean, z_log_var = args
+        batch = K.shape(z_mean)[0]
+        dim = K.int_shape(z_mean)[1]
+        # by default, random_normal has mean = 0 and std = 1.0
+        epsilon = K.random_normal(shape=(batch, dim))
+        return z_mean + K.exp(0.5 * z_log_var) * epsilon
+
+    # use reparameterization trick to push the sampling out as input
+    # note that "output_shape" isn't necessary with the TensorFlow backend
+    z = Lambda(sampling, output_shape=(latent_dim,), name='z')([z_mean, z_log_var])
+
+    # Instantiate the encoder model:
+    encoder = Model(inputs, z_mean)
+
+    # Build the decoder model:
+    latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
+    x = Dense(intermediate_dim, activation='relu')(latent_inputs)
+    outputs = Dense(original_dim, activation='sigmoid')(x)
+
+    # Instantiate the decoder model:
+    decoder = Model(latent_inputs, outputs, name='decoder')
+
+    # Instantiate the VAE model:
+    outputs = decoder(encoder(inputs))
+    vae = Model(inputs, outputs, name='vae_mlp')
+
+    # As in the Keras tutorial, we define a custom loss function:
+    def vae_loss(x, x_decoded_mean):
+        xent_loss = binary_crossentropy(x, x_decoded_mean)
+        kl_loss = - 0.5 * K.mean(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
+        return xent_loss + kl_loss
+
+    # We compile the model:
+    vae.compile(optimizer='rmsprop', loss=vae_loss)
+
+    if verbose!= 0:
+        vae.summary()
+
+    return vae, decoder,encoder
+
+
+
 def predictAutoencoder(autoencoder, data):
     # train autoencoder
     autoencoder.fit(data, data, shuffle=True, epochs=500, batch_size=50)
@@ -362,23 +440,46 @@ def portfolio_selection(d,df_portfolio , ranking_colum ,  n_stocks_per_bin, budg
 
 
 
-def calcMarkowitzPortfolio(df, budget):
+def calcMarkowitzPortfolio(df, budget, S,target = None, type = 'max_sharpe', frequency=252, cov_type=None):
 
+    '''
+
+    :param df:  dataframe of returns
+    :param budget: budegt to be allocated to the portfolio
+    :param S: Covariance matrix
+    :param frequency: annual trading days
+    :return: returns discrete allocation of stocks, discrete leftover and cleaned weights of stocks in the portfolio
+    '''
     # Calculate expected returns and sample covariance
+    #mu = expected_returns.mean_historical_return(df)
     mu = expected_returns.mean_historical_return(df)
-    S = risk_models.sample_cov(df)
 
+    S = S * frequency
     # Optimise for maximal Sharpe ratio
-    ef = EfficientFrontier(mu, S)
-    weights = ef.max_sharpe()
+    if cov_type == 'adjusted':
+        S_unadjusted = risk_models.sample_cov(df)
+        ef = EfficientFrontier(expected_returns=mu, cov_matrix = S, cov_matrix_unadjusted = S_unadjusted, cov_type = cov_type)
+    else:
+        ef = EfficientFrontier(expected_returns=mu, cov_matrix = S)
+
+    if type == 'efficient_return':
+        weights = ef.efficient_return(target_return=target)
+    if type == 'max_sharpe':
+        weights = ef.max_sharpe()
+    if type == 'efficient_risk':
+        weights = ef.efficient_risk(target_risk=target)
+
+
     cleaned_weights = ef.clean_weights()
-    ef.portfolio_performance(verbose=False)
+    results = ef.portfolio_performance(verbose=True)
+
+
 
     latest_prices = get_latest_prices(df)
-    da = DiscreteAllocation(weights, latest_prices, total_portfolio_value=budget, min_allocation=-1)
+    da = DiscreteAllocation(weights, latest_prices, total_portfolio_value=budget)
     discrete_allocation, discrete_leftover = da.lp_portfolio()
 
-    return discrete_allocation, discrete_leftover, weights, cleaned_weights
+    return discrete_allocation, discrete_leftover, weights, cleaned_weights , mu, S, results
 
 
 
@@ -403,6 +504,7 @@ def calc_delta_matrix(self):
                 c = 0
             elif not valid.all():
                 c = ac[valid] - bc[valid]
+
             else:
                 c = ac - bc
             delta_mat[i, j] = c
@@ -465,3 +567,16 @@ def convert_relative_changes_to_absolute_values(relative_values, initial_value):
 
 reconstructed_series =convert_relative_changes_to_absolute_values(relative_values=test_df_change, initial_value=test_df.iloc[0,0])
 
+
+def append_to_portfolio_results(array, d, portfolio_type, discrete_allocation, results):
+    array.append(
+        {
+            'backtest_iteration': d,
+            'portfolio_type': portfolio_type,
+            'expected_annual_return': results[0],
+            'annual_volatility': results[1],
+            'sharpe_ratio': results[2],
+            'discrete_allocation': discrete_allocation
+        }
+    )
+    return array
