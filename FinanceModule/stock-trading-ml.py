@@ -68,7 +68,7 @@ def stock_forceasting(i, column, df, timeseries_evaluation, timeseries_forecasti
         # data imputation
         df_filtered = df_filtered.T.fillna(df_filtered.mean(axis=1)).T
         df_filtered = df_filtered.fillna(method='ffill')
-        df_filtered = df_filtered.tail(n_days)20200727
+        df_filtered = df_filtered.tail(n_days)
         file1 = open("data/" + column + "step1.txt", "a")
         file1.close()
 
