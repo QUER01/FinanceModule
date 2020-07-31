@@ -1,5 +1,6 @@
 from keras.models import Model
-from keras.layers import Dense, Dropout, LSTM, Input, Activation, concatenate, regularizers
+from keras.layers import Dense, Dropout, LSTM, Input, Activation, concatenate
+from keras import regularizers
 from keras import optimizers
 import numpy as np
 np.random.seed(4)
@@ -11,6 +12,12 @@ from lib.pypfopt_055.efficient_frontier import EfficientFrontier
 from lib.pypfopt_055 import base_optimizer, risk_models
 from lib.pypfopt_055 import expected_returns
 from lib.pypfopt_055.discrete_allocation import DiscreteAllocation, get_latest_prices
+import matplotlib.pyplot as plt
+
+from termcolor import colored
+from FinanceModule.util_forecasting_metrics import *
+from pandas.tseries.offsets import DateOffset
+import gc
 
 
 import keras
@@ -192,6 +199,219 @@ def defineModel(ohlcv_histories_normalised,technical_indicators, verbose= 0 ):
         model.summary()
     return model
 
+
+def print_stock(name):
+    print(name)
+    return print('hello', name)
+
+
+def stock_forceasting(i, column, df_filtered, timeseries_evaluation, timeseries_forecasting, l_tickers_unique, n_days, n_forecast, test_split, verbose, d, plot_results,fontsize):
+
+    print('-' * 10 + 'Iteration: ' + str(i) + '/' + str(len(l_tickers_unique)) + '  ticker name:' + column)
+
+
+    if len(df_filtered.columns) != 5:
+        print(colored('-' * 15 + 'Not all columns available', 'red'))
+
+
+    else:
+        # data imputation
+        df_filtered = df_filtered.T.fillna(df_filtered.mean(axis=1)).T
+        df_filtered = df_filtered.fillna(method='ffill')
+        df_filtered = df_filtered.tail(n_days)
+
+        if timeseries_evaluation:
+            print('-' * 15 + ' PART I: Timeseries Evaluation for : ' + column)
+            print('-' * 20 + 'Transform the timeseries into an supervised learning problem')
+
+            next_day_open_values_normalised, next_day_open_values, ohlcv_histories_normalised, technical_indicators, data_normaliser, y_normaliser = createDataset(
+                df_filtered)
+
+            # split data into train and test datasets
+            print('-' * 20 + 'Split data into train and test datasets')
+            n = int(ohlcv_histories_normalised.shape[0] * test_split)
+            ohlcv_train, ohlcv_test = splitTrainTest(values=ohlcv_histories_normalised, n=n)
+            tech_ind_train, tech_ind_test = splitTrainTest(values=technical_indicators, n=n)
+            y_train, y_test = splitTrainTest(values=next_day_open_values_normalised, n=n)
+            unscaled_y_train, unscaled_y_test = splitTrainTest(values=next_day_open_values, n=n)
+
+            # model architecture
+            print('-' * 20 + 'Design the model')
+            model = defineModel(ohlcv_histories_normalised=ohlcv_histories_normalised,
+                                technical_indicators=technical_indicators, verbose=verbose)
+            # fit model
+            print('-' * 20 + 'Fit the model')
+            model.fit(x=[ohlcv_train, tech_ind_train], y=y_train, batch_size=32, epochs=50, shuffle=True,
+                      validation_split=0.1, verbose=verbose)
+            model.save('img/backtest_' + str(d) + '_' + column + '_eval_model.h5')
+
+            # evaluate model
+            print('-' * 20 + 'Evaluate the model')
+            y_test_predicted = model.predict([ohlcv_test, tech_ind_test])
+            y_test_predicted = y_normaliser.inverse_transform(y_test_predicted)
+            y_predicted = model.predict([ohlcv_histories_normalised, technical_indicators])
+            y_predicted = y_normaliser.inverse_transform(y_predicted)
+            assert unscaled_y_test.shape == y_test_predicted.shape
+            assert unscaled_y_test.shape == y_test_predicted.shape
+
+            metrics = evaluate_all(unscaled_y_test, y_test_predicted)
+            #metrics = evaluate_all(next_day_open_values, y_predicted)
+
+            #real_mse = np.mean(np.square(unscaled_y_test - y_test_predicted))
+            #scaled_mse = real_mse / (np.max(unscaled_y_test) - np.min(unscaled_y_test)) * 100
+            #print('-' * 25 + 'Scaled MSE: ' + str(scaled_mse))
+            #scaled_mse_arr.append([d, column, scaled_mse])
+
+            # TODO: change name to df_mase
+            df_scaled_mse = pd.DataFrame(data=metrics['mase'], columns=['backtest_iteration', 'ticker', 'scaled mse'])
+            df_scaled_mse.to_csv('data/intermediary/df_scaled_mse_' + str(d) + '_' + column + '.csv', sep=';')
+
+            if plot_results:
+                # plot the results
+                print('-' * 20 + 'Plot the results')
+                plt.figure()
+                plt.rcParams["figure.figsize"] = (10, 7)
+                plt.box(False)
+                fig, (ax1, ax2) = plt.subplots(2, 1)
+                fig.tight_layout(pad=5.0)
+
+
+                # fig.suptitle('Horizontally stacked subplots')
+                start = 0
+                end = -1
+                real = ax1.plot(next_day_open_values[start:end], label='real')
+                pred = ax1.plot(y_predicted[start:end], label='predicted')
+
+                # set title
+                fig.suptitle('Stock price [{stock}] over time. [MASE = {mase}]'.format(stock=column, mase = str(round(metrics['mase'],2))),  fontsize=fontsize)
+
+                # removing all borders
+                ax1.spines['top'].set_visible(False)
+                ax1.spines['right'].set_visible(False)
+                ax1.spines['left'].set_visible(False)
+                ax1.spines['bottom'].set_visible(False)
+
+
+                real = ax2.plot(unscaled_y_test[start:end], label='real')
+                pred = ax2.plot(y_test_predicted[start:end], label='predicted')
+
+                ax2.set_xlabel('Days')
+                #ax2.set_ylabel('€')
+
+                ax2.spines['top'].set_visible(False)
+                ax2.spines['right'].set_visible(False)
+                ax2.spines['left'].set_visible(False)
+                ax2.spines['bottom'].set_visible(False)
+
+                ax1.legend(['Real', 'Predicted'], frameon=False, fontsize=fontsize)
+
+                plt.show()
+                plt.savefig('img/backtest_' + str(d) + '_' + column + '_evaluation.png')
+
+        ## forecast
+        print('-' * 15 + 'PART III: ' + str(n_forecast) + '-Step-Forward Prediction ')
+        for j in range(0, n_forecast):
+            print('-' * 17 + 'Starting forecast ' + str(j)  )
+            print('-' * 20 + 'Transform the timeseries into an supervised learning problem')
+            next_day_open_values_normalised, next_day_open_values, ohlcv_histories_normalised, technical_indicators, data_normaliser, y_normaliser = createDataset(
+                df_filtered)
+
+            #if j == 0:
+            # initialize the dataset
+            print('-' * 20 + 'Initialize certain objects')
+              # model architecture
+            print('-' * 25 + 'Design the model')
+
+            model = defineModel(ohlcv_histories_normalised=ohlcv_histories_normalised,
+                                technical_indicators=technical_indicators, verbose=verbose)
+            # fit model
+            print('-' * 25 + 'Fit the model')
+            model.fit(x=[ohlcv_histories_normalised, technical_indicators],
+                      y=next_day_open_values_normalised,
+                      batch_size=32, epochs=50, shuffle=True, validation_split=0.1, verbose=verbose)
+
+            model.save('img/backtest_' + str(d) + '_' + column + '_forecasting_model.h5')
+
+            # evaluate model
+            print('-' * 20 + 'Predict with the model')
+            y_predicted = model.predict([ohlcv_histories_normalised, technical_indicators])
+            y_predicted = y_normaliser.inverse_transform(y_predicted)
+
+            print('-' * 20 + 'Creating the result dataset')
+            n_output = 1
+            # identifying the predicted output
+            newValue = y_predicted[-n_output:, 0].flat[0]
+            # identifying the date index
+            add_dates = [df_filtered.index[-1] + DateOffset(days=x) for x in range(1, n_output + 1)]
+
+            df_predict_ohlcv = pd.DataFrame(data=np.array([df_filtered.iloc[-1, 0]
+                                                              , df_filtered.iloc[-1, 1]
+                                                              , df_filtered.iloc[-1, 2]
+                                                              , newValue
+                                                              , df_filtered.iloc[-1, 4]]).reshape(1, 5),
+                                            index=add_dates[0:n_output], columns=df_filtered.columns)
+
+            df_filtered = df_filtered.append(df_predict_ohlcv, sort=False)
+
+
+
+        # initialize the result dataset
+        # We need to initialize these values here because they depend on the firsts computations
+        if 'df_result' not in locals():
+            print('-' * 20 + 'Iteration: ' + str(i) + '   Initialize the result dataset')
+            global df_result
+            df_result = pd.DataFrame(index=df_filtered.index)
+
+        print('-' * 15 + ' Creating the result dataset')
+        df_predicted = pd.DataFrame(data=y_predicted, index=df_filtered.tail(len(y_predicted)).index,
+                                    columns=[column + '/prediction'])
+
+        # add ohlcv columns to the dataset
+        df_result = df_result.join(df_filtered)
+        # add model prediction to the dataset
+        df_result = df_result.join(df_predicted)
+
+        # save to disk
+        print('-' * 10 + ' Save results to disk Backtest number: ' + str(d) + ' as: data/intermediary/df_result_' + str(d) + '_' + column + '.csv')
+        df_result.to_csv('data/intermediary/df_result_' + str(d) + '_' + column + '.csv', sep=';')
+        #plot_model(model, to_file='img/model_lstm_{name}.png'.format(name = column), show_shapes=True, show_layer_names=True)
+
+        if plot_results:
+            print('-' * 15 + ' Plot the results of the ' + str(n_forecast) + '-Step-Forward Prediction ')
+            plt.figure(figsize=(18, 7))
+            plt.box(False)
+            plt.plot(df_filtered.index, df_filtered[df_filtered.columns[0]])
+            plt.plot(df_filtered.index, df_filtered[df_filtered.columns[1]])
+            plt.plot(df_filtered.index, df_filtered[df_filtered.columns[2]])
+            plt.plot(df_filtered.index, df_filtered[df_filtered.columns[3]])
+            plt.plot(df_predicted.index, df_predicted[df_predicted.columns[0]])
+
+            # plt.plot(df_filtered.index, df_filtered['Prediction_Future'], color='r')
+            # plt.plot(df_proj.index, df_proj['Prediction'], color='y')
+            plt.legend(
+                [df_filtered.columns[0], df_filtered.columns[1], df_filtered.columns[2], df_filtered.columns[3],
+                 df_predicted.columns[0]], frameon=False)
+            plt.xticks(fontsize=18)
+            plt.yticks(fontsize=16)
+            #plt.show()
+
+            plt.savefig('img/backtest_' + str(d) + '_' + column + '.png')
+
+        # clean up
+        del df_predict_ohlcv
+        del add_dates
+        del newValue
+        del y_predicted
+        del model
+        del next_day_open_values_normalised, next_day_open_values, ohlcv_histories_normalised, technical_indicators, data_normaliser, y_normaliser
+        del df_filtered
+
+        # collect and remove variables from garbage colector and thereby free up memory
+        gc.collect()
+
+
+
+
 def defineAutoencoder(num_stock, encoding_dim = 5, verbose=0):
 
     # connect all layers
@@ -213,6 +433,24 @@ def defineAutoencoder(num_stock, encoding_dim = 5, verbose=0):
 
     return autoencoder
 
+ # Use those parameters to sample new points from the latent space:
+# reparameterization trick
+# instead of sampling from Q(z|X), sample epsilon = N(0,I)
+# z = z_mean + sqrt(var) * epsilon
+def sampling(args):
+    """Reparameterization trick by sampling from an isotropic unit Gaussian.
+    # Arguments
+        args (tensor): mean and log of variance of Q(z|X)
+    # Returns
+        z (tensor): sampled latent vector
+    """
+
+    z_mean, z_log_var = args
+    batch = K.shape(z_mean)[0]
+    dim = K.int_shape(z_mean)[1]
+    # by default, random_normal has mean = 0 and std = 1.0
+    epsilon = K.random_normal(shape=(batch, dim))
+    return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
 
 def defineVariationalAutoencoder(original_dim,
@@ -230,31 +468,13 @@ def defineVariationalAutoencoder(original_dim,
     z_mean = Dense(latent_dim, name='z_mean')(x)
     z_log_var = Dense(latent_dim, name='z_log_var')(x)
 
-    # Use those parameters to sample new points from the latent space:
-    # reparameterization trick
-    # instead of sampling from Q(z|X), sample epsilon = N(0,I)
-    # z = z_mean + sqrt(var) * epsilon
-    def sampling(args):
-        """Reparameterization trick by sampling from an isotropic unit Gaussian.
-        # Arguments
-            args (tensor): mean and log of variance of Q(z|X)
-        # Returns
-            z (tensor): sampled latent vector
-        """
-
-        z_mean, z_log_var = args
-        batch = K.shape(z_mean)[0]
-        dim = K.int_shape(z_mean)[1]
-        # by default, random_normal has mean = 0 and std = 1.0
-        epsilon = K.random_normal(shape=(batch, dim))
-        return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
     # use reparameterization trick to push the sampling out as input
     # note that "output_shape" isn't necessary with the TensorFlow backend
     z = Lambda(sampling, output_shape=(latent_dim,), name='z')([z_mean, z_log_var])
 
     # Instantiate the encoder model:
-    encoder = Model(inputs, z_mean)
+    encoder = Model(inputs, [z_mean,z_log_var,z], name='encoder')
 
     # Build the decoder model:
     latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
