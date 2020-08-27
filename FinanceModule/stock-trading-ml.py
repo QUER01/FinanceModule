@@ -68,6 +68,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
     n_forecast = 10
     n_tickers = 6000
     n_days = 250 * 4
+    trading_days = 252
     sectors = ['FINANCE', 'CONSUMER SERVICES', 'TECHNOLOGY',
                'CAPITAL GOODS', 'BASIC INDUSTRIES', 'HEALTH CARE',
                'CONSUMER DURABLES', 'ENERGY', 'TRANSPORTATION', 'CONSUMER NON-DURABLES']
@@ -91,14 +92,14 @@ if __name__ == "__main__":  # confirms that the code is under main function
     """
     transformDataset( input_path='data/historical_stock_prices.csv', input_sep=','
                      , metadata_input_path = 'data/historical_stocks.csv', metadata_sep = ','
-                     ,output_path='data/historical_stock_prices_filtered.csv', output_sep=';'
+                     ,output_path='data/historical_stock_prices_original.csv', output_sep=';'
                      ,filter_sectors = sectors
                      ,n_tickers = n_tickers, n_last_values = n_days )
     
     """
 
     print('-' * 5 + 'Loading the dataset from disk')
-    df_original = pd.read_csv('data/historical_stock_prices_filtered.csv', sep=';', index_col='date')
+    df_original = pd.read_csv('data/historical_stock_prices_original.csv', sep=';', index_col='date')
     #df_original = df_original.iloc[0:100]
 
     df_original.index = pd.to_datetime(df_original.index)
@@ -189,8 +190,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
     # 2. Forecasting using recurrent neural networks
     if timeseries_forecasting:
-        #for d in range(8, 16)[::-1]:
-        for d in range(int(backtest_days/n_forecast)+1)[::-1]:
+        for d in range(5, 8)[::-1]:
+        #for d in range(int(backtest_days/n_forecast)+1)[::-1]:
             if d != 0:
                 print('-' * 5 + 'Backtest Iteration ' + str(d))
                 df = df_original.head(len(df_original) - n_forecast * d)
@@ -251,6 +252,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
         portfolio_results = []
         markowitz_allocation = []
         df_results_markowitz_allocation = pd.DataFrame()
+        df_results_portfolio = pd.DataFrame()
         new_columns = []
 
 
@@ -283,17 +285,17 @@ if __name__ == "__main__":  # confirms that the code is under main function
         target_annual_return = 0.50
 
 
-        for d in range(int(backtest_days / n_forecast) + 1)[::-1]:
-
+        #for d in range(int(backtest_days / n_forecast) + 1)[::-1]:
+        for d in range(3)[::-1]:
             if d != 0:
 
                 print('-' * 5 + 'Backtest Iteration ' + str(d))
                 portfolio_results_temp = []
 
                 # get full dataset
-                if 'df_original' not in locals():
-                    df_original = pd.read_csv('data/historical_stock_prices_filtered.csv', sep=';')
-                    df_original.index = pd.to_datetime(df_original.date)
+                #if 'df_original' not in locals():
+                df_original = pd.read_csv('data/historical_stock_prices_original.csv', sep=';')
+                df_original.index = pd.to_datetime(df_original.date)
 
                 # get backtest iteration dataset with forecasted values
                 df_result = pd.read_csv('data/df_result_' + str(d) + '.csv', sep=';', index_col='Unnamed: 0',
@@ -304,7 +306,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
                 print('-' * 20 + 'Create dataset')
                 df_result_close = df_result.filter(like='Close', axis=1)
-                df_original = df_original.filter(like='Close', axis=1)
+                df_original_close = df_original.filter(like='Close', axis=1)
+                df_original_close = df_original_close[0:300]
 
                 if test_setting:
                     df_result_close = df_result_close.iloc[:, 0:number_of_stocks]
@@ -314,8 +317,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
                 df_result_close.columns = new_columns
 
                 new_columns = []
-                [new_columns.append(c.split('_')[0]) for c in df_original.columns ]
-                df_original.columns = new_columns
+                [new_columns.append(c.split('_')[0]) for c in df_original_close.columns ]
+                df_original_close.columns = new_columns
 
                 print('-' * 20 + 'Data Cleaning: Check if all values are positive')
                 try:
@@ -325,12 +328,25 @@ if __name__ == "__main__":  # confirms that the code is under main function
                     print('Dataframe contains negative and zero numbers. Replacing them with 0')
                     df_result_close = df_result_close[df_result_close >= 0].dropna(axis=1)
 
+                try:
+                    assert len(df_original_close[df_original_close >= 0].dropna(axis=1).columns) == len(df_original_close.columns)
+                except Exception as exception:
+                    # Output unexpected Exceptions.
+                    print('Dataframe contains negative and zero numbers. Replacing them with 0')
+                    df_original_close = df_original_close[df_original_close >= 0].dropna(axis=1)
+
                 print('-' * 20 + 'Transform dataset')
                 df_pct_change = df_result_close.pct_change(1).astype(float)
                 df_pct_change = df_pct_change.replace([np.inf, -np.inf], np.nan)
                 df_pct_change = df_pct_change.fillna(method='ffill')
                 # the percentage change function will make the first two rows equal to nan
                 df_pct_change = df_pct_change.tail(len(df_pct_change) - 2)
+
+                df_pct_change_original = df_original_close.pct_change(1).astype(float)
+                df_pct_change_original = df_pct_change_original.replace([np.inf, -np.inf], np.nan)
+                df_pct_change_original = df_pct_change_original.fillna(method='ffill')
+                # the percentage change function will make the first two rows equal to nan
+                df_pct_change_original = df_pct_change_original.tail(len(df_pct_change_original) - 2)
 
                 # remove columns where there is no change over a longer time period
                 #df_pct_change = df_pct_change[df_pct_change.columns[((df_pct_change == 0).mean() <= 0.05)]]
@@ -342,7 +358,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                 #           Step2: Similarity Model
                 # -------------------------------------------------------
 
-
+                '''
                 print('-' * 20 + 'Step 2 : Returns vs. latent feature similarity')
                 print('-' * 25 + 'Transpose dataset')
                 df_pct_change_transposed = df_pct_change.transpose()
@@ -380,7 +396,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                 df_latent_feature = pd.DataFrame(latent_features.T, columns=df_pct_change.columns)
                 df_similarity_cov = df_latent_feature.cov()
                 df_similarity_cor = df_latent_feature.corr()
-
+                '''
 
 
                 # -------------------------------------------------------
@@ -435,7 +451,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                 df_pct_change_corr = df_pct_change.corr()
                 df_pct_change_cov = df_pct_change.cov()
 
-
+                '''
                 # plots for 1. Selection of least volatile stocks using autoencoder latent feature value
                 if plot_results:
                     stable_stocks = False
@@ -631,7 +647,6 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
 
 
-                        '''
                         # Plots for 3. compare original timeseries with latent features
                         plt.figure()
                         plt.rcParams["figure.figsize"] = (18, 10)
@@ -661,9 +676,9 @@ if __name__ == "__main__":  # confirms that the code is under main function
                         plt.xlabel("Dates")
                         plt.ylabel("Stock Value")
                         plt.show()
-                        '''
+                   
 
-
+            '''
 
                 # -------------------------------------------------------
                 #           Step3: Markowitz Model
@@ -671,6 +686,24 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
                 print('-' * 20 + 'Step 3: Create dataset')
                 df_result_close = df_result_close[df_pct_change.columns]
+
+                print('-' * 20 + 'Step 3: Markowitz model without forecast values and without preselection')
+                discrete_allocation, discrete_leftover, weights, cleaned_weights, mu, S, results = calcMarkowitzPortfolio(
+                     df=df_original_close.head(len(df_original_close)-n_forecast  )
+                    , budget=budget
+                    , S=df_pct_change_original.cov()
+                    , type='max_sharpe'
+                    , target=target_annual_return)
+                df_markowitz_allocation_without_forecast_without_preseletcion = pd.DataFrame(discrete_allocation.items(),
+                                                            columns=['stock_name', 'bought_volume_without_forecast_without_preselection'])
+                df_markowitz_allocation_without_forecast_without_preseletcion = df_markowitz_allocation_without_forecast_without_preseletcion.set_index('stock_name')
+
+                append_to_portfolio_results(array=portfolio_results_temp,
+                                            d=d,
+                                            portfolio_type='markowitz_portfolio_without_forecast_without_preselection',
+                                            discrete_allocation=discrete_allocation,
+                                            results=results)
+
 
                 print('-' * 20 + 'Step 3: Markowitz model without forecast values')
                 discrete_allocation, discrete_leftover, weights, cleaned_weights, mu, S, results = calcMarkowitzPortfolio(
@@ -715,7 +748,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                                                                                                           ,S = df_var_autoencoder_reconstruct_real_cov
                                                                                                           ,type = 'max_sharpe'
                                                                                                           ,target = target_annual_return
-                                                                                                          ,cov_type = 'adjusted-disabled')
+                                                                                                          ,cov_type = 'adjusted')
                 df_markowitz_allocation_var_autoencoder = pd.DataFrame(discrete_allocation.items(),  columns=['stock_name','bought_volume_with_forecast_cleaned'])
                 df_markowitz_allocation_var_autoencoder = df_markowitz_allocation_var_autoencoder.set_index('stock_name')
 
@@ -726,7 +759,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                                             results=results)
 
 
-
+                '''
                 print('-' * 20 + 'Step 3: Markowitz model with latent features')
                 discrete_allocation, discrete_leftover, weights, cleaned_weights,mu, S, results = calcMarkowitzPortfolio(df=df_result_close
                                                                                                           ,budget=budget
@@ -747,8 +780,12 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
                 #cla = CLA(expected_returns=mu, cov_matrix=S, weight_bounds=(0, 1))
                 #Plotting.plot_efficient_frontier(cla, points=100, show_assets=True)
-
-                df_markowitz_allocation = df_markowitz_allocation_with_forecast.join(df_markowitz_allocation_without_forecast
+                '''
+                df_markowitz_allocation = df_markowitz_allocation_without_forecast_without_preseletcion.join(df_markowitz_allocation_with_forecast
+                                                                            , how='outer'
+                                                                            , lsuffix =''
+                                                                            , rsuffix='')
+                df_markowitz_allocation = df_markowitz_allocation.join(df_markowitz_allocation_without_forecast
                                                                             , how='outer'
                                                                             , lsuffix =''
                                                                             , rsuffix='')
@@ -757,11 +794,12 @@ if __name__ == "__main__":  # confirms that the code is under main function
                                                                             , lsuffix =''
                                                                             , rsuffix='')
 
+                '''
                 df_markowitz_allocation = df_markowitz_allocation.join(df_markowitz_allocation_latent_feature
-                                                                       ,how='outer'
-                                                                       ,lsuffix=''
-                                                                       ,rsuffix='')
-
+                                                       ,how='outer'
+                                                       ,lsuffix=''
+                                                       ,rsuffix='')
+                '''
                 df_result_close_buy_price = df_result_close.tail(n_forecast).head(1).transpose()
                 df_result_close_buy_price = df_result_close_buy_price.rename(columns={df_result_close_buy_price.columns[0]: "buy_price"})
 
@@ -780,32 +818,50 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
                 df_markowitz_allocation['delta'] = df_markowitz_allocation['sell_price'] - df_markowitz_allocation['buy_price']
 
+                df_markowitz_allocation['profit_without_forecast_without_preselection'] = df_markowitz_allocation['delta'] * \
+                                                                     df_markowitz_allocation[
+                                                                         'bought_volume_without_forecast_without_preselection']
                 df_markowitz_allocation['profit_without_forecast'] = df_markowitz_allocation['delta'] * df_markowitz_allocation['bought_volume_without_forecast']
                 df_markowitz_allocation['profit_with_forecast'] = df_markowitz_allocation['delta'] * df_markowitz_allocation[
                     'bought_volume_with_forecast']
                 df_markowitz_allocation['profit_with_forecast_cleaned'] = df_markowitz_allocation['delta'] * df_markowitz_allocation[
                     'bought_volume_with_forecast_cleaned']
-                df_markowitz_allocation['profit_with_forecast_latent'] = df_markowitz_allocation['delta'] * df_markowitz_allocation[
-                    'bought_volume_with_forecast_latent']
+                #df_markowitz_allocation['profit_with_forecast_latent'] = df_markowitz_allocation['delta'] * df_markowitz_allocation[
+                #    'bought_volume_with_forecast_latent']
 
                 df_results_markowitz_allocation = df_results_markowitz_allocation.append(df_markowitz_allocation)
 
-                portfolio_results_temp[0]['profit'] = np.sum(df_markowitz_allocation['profit_without_forecast'])
-                portfolio_results_temp[2]['profit'] = np.sum(df_markowitz_allocation['profit_with_forecast'])
-                portfolio_results_temp[3]['profit'] = np.sum(df_markowitz_allocation['profit_with_forecast_cleaned'])
-                portfolio_results_temp[4]['profit'] = np.sum(df_markowitz_allocation['profit_with_forecast_latent'])
+                df_results_portfolio_temp = pd.DataFrame.from_dict(portfolio_results_temp)
 
-                portfolio_results.append(portfolio_results_temp)
-
-
-        df_results_portfolio = pd.DataFrame.from_dict(portfolio_results)
-
+                df_results_portfolio_temp['profit'] = [np.sum(df_markowitz_allocation['profit_without_forecast_without_preselection']),
+                                                       np.sum(df_markowitz_allocation['profit_without_forecast'])
+                                                       , np.sum(df_markowitz_allocation['profit_with_forecast'])
+                                                       ,np.sum(df_markowitz_allocation['profit_with_forecast_cleaned'])
+                                                       #,np.sum(df_markowitz_allocation['profit_with_forecast_latent'])
+                                                     ]
 
 
 
 
 
 
+                df_results_portfolio = df_results_portfolio.append(df_results_portfolio_temp)
+                # End of for loop
+
+            # Plot
+            groups = df_results_portfolio.groupby('portfolio_type')
+
+            fig, ax = plt.subplots(figsize=(10, 6))
+            plt.box(False)
+            for name, group in groups:
+                ax.plot(group.backtest_iteration, group.profit, ms=12,
+                        label='Group ' + str(name), alpha=0.5)
+
+            plt.title('Profits after each backtest')
+            plt.xlabel("Backtest iteration")
+            plt.ylabel("Profits generated in the last {v_n_forecast} days".format(v_n_forecast=n_forecast))
+            ax.legend(loc='best',  frameon=False)
+            plt.show()
 
 
 
@@ -813,7 +869,10 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
 
 
-    '''
+
+
+
+'''
                 print('-' * 20 + 'Step 4: Create Portfolio ')
                 print(
                     '-' * 25 + 'Join the datasets from the similarity score and the reconstruction error with some metadata')

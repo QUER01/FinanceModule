@@ -474,7 +474,7 @@ def defineVariationalAutoencoder(original_dim,
     z = Lambda(sampling, output_shape=(latent_dim,), name='z')([z_mean, z_log_var])
 
     # Instantiate the encoder model:
-    encoder = Model(inputs, [z_mean,z_log_var,z], name='encoder')
+    encoder = Model(inputs, z, name='encoder')
 
     # Build the decoder model:
     latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
@@ -697,7 +697,10 @@ def calcMarkowitzPortfolio(df, budget, S,target = None, type = 'max_sharpe', fre
 
     latest_prices = get_latest_prices(df)
     da = DiscreteAllocation(weights, latest_prices, total_portfolio_value=budget)
-    discrete_allocation, discrete_leftover = da.lp_portfolio()
+    try:
+        discrete_allocation, discrete_leftover = da.lp_portfolio()
+    except:
+        discrete_allocation, discrete_leftover = da.greedy_portfolio()
 
     return discrete_allocation, discrete_leftover, weights, cleaned_weights , mu, S, results
 
