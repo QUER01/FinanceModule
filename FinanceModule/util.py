@@ -418,10 +418,8 @@ def defineAutoencoder(num_stock, encoding_dim = 5, verbose=0):
     input = Input(shape=(num_stock,))
 
     encoded = Dense(encoding_dim, kernel_regularizer=regularizers.l2(0.00001),name ='Encoder_Input')(input)
-    #encoded = Activation("relu", name='Encoder_Activation_function')(encoded)
-    #encoded = Dropout(0.2, name='Encoder_Dropout')(encoded)
 
-    decoded = Dense(num_stock, kernel_regularizer=regularizers.l2(0.00001), name ='Decoder_Input')(encoded)  # see 'Stacked Auto-Encoders' in paper
+    decoded = Dense(num_stock, kernel_regularizer=regularizers.l2(0.00001), name ='Decoder_Input')(encoded)
     decoded = Activation("linear", name='Decoder_Activation_function')(decoded)
 
     # construct and compile AE model
@@ -453,11 +451,7 @@ def sampling(args):
     return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
 
-def defineVariationalAutoencoder(original_dim,
-                                 intermediate_dim,
-                                 latent_dim,
-                                 verbose=0):
-
+def defineVariationalAutoencoder(original_dim, intermediate_dim, latent_dim, verbose=0):
     input_shape = (original_dim,)
 
     # Map inputs to the latent distribution parameters:
@@ -467,7 +461,6 @@ def defineVariationalAutoencoder(original_dim,
     x = Dense(intermediate_dim, activation='relu')(inputs)
     z_mean = Dense(latent_dim, name='z_mean')(x)
     z_log_var = Dense(latent_dim, name='z_log_var')(x)
-
 
     # use reparameterization trick to push the sampling out as input
     # note that "output_shape" isn't necessary with the TensorFlow backend
@@ -663,17 +656,15 @@ def portfolio_selection(d,df_portfolio , ranking_colum ,  n_stocks_per_bin, budg
 def calcMarkowitzPortfolio(df, budget, S,target = None, type = 'max_sharpe', frequency=252, cov_type=None):
 
     '''
-
     :param df:  dataframe of returns
     :param budget: budegt to be allocated to the portfolio
     :param S: Covariance matrix
     :param frequency: annual trading days
     :return: returns discrete allocation of stocks, discrete leftover and cleaned weights of stocks in the portfolio
     '''
-    # Calculate expected returns and sample covariance
-    #mu = expected_returns.mean_historical_return(df)
-    mu = expected_returns.mean_historical_return(df)
 
+    # Calculate expected returns and sample covariance
+    mu = expected_returns.mean_historical_return(df)
     S = S * frequency
     # Optimise for maximal Sharpe ratio
     if cov_type == 'adjusted':
@@ -689,11 +680,8 @@ def calcMarkowitzPortfolio(df, budget, S,target = None, type = 'max_sharpe', fre
     if type == 'efficient_risk':
         weights = ef.efficient_risk(target_risk=target)
 
-
     cleaned_weights = ef.clean_weights()
     results = ef.portfolio_performance(verbose=True)
-
-
 
     latest_prices = get_latest_prices(df)
     da = DiscreteAllocation(weights, latest_prices, total_portfolio_value=budget)
