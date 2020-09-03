@@ -56,8 +56,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
      E.g. Time Series Evaluation cannot run in the same script as time series forecasting. 
     '''
     timeseries_evaluation = False
-    timeseries_forecasting =False
-    portfolio_optimization = True
+    timeseries_forecasting =True
+    portfolio_optimization = False
 
 
     verbose = 0
@@ -81,7 +81,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
     stock_selection_number = 500
 
     # 2. Forecasting using recurrent neural networks
-    backtest_days = 70
+    backtest_days = 200
     scaled_mse_arr = []
 
     if test_setting:
@@ -100,7 +100,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
     print('-' * 5 + 'Loading the dataset from disk')
     df_original = pd.read_csv('data/historical_stock_prices_original.csv', sep=';', index_col='date')
-    #df_original = df_original.iloc[0:100]
+
 
     df_original.index = pd.to_datetime(df_original.index)
 
@@ -190,9 +190,10 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
     # 2. Forecasting using recurrent neural networks
     if timeseries_forecasting:
-        for d in range(5, 8)[::-1]:
-        #for d in range(int(backtest_days/n_forecast)+1)[::-1]:
-            if d != 0:
+        #for d in range(5, 8)[::-1]:
+        for d in range(int(backtest_days/n_forecast)+1)[::-1]:
+
+            if d != 0 and d > 11:
                 print('-' * 5 + 'Backtest Iteration ' + str(d))
                 df = df_original.head(len(df_original) - n_forecast * d)
                 print('-' * 5 + 'Starting for loop over all tickers')
@@ -285,8 +286,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
         target_annual_return = 0.50
 
 
-        #for d in range(int(backtest_days / n_forecast) + 1)[::-1]:
-        for d in range(3)[::-1]:
+        for d in range(int(backtest_days / n_forecast) + 1)[::-1]:
+        #for d in range(3)[::-1]:
             if d != 0:
 
                 print('-' * 5 + 'Backtest Iteration ' + str(d))
@@ -306,8 +307,13 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
                 print('-' * 20 + 'Create dataset')
                 df_result_close = df_result.filter(like='Close', axis=1)
-                df_original_close = df_original.filter(like='Close', axis=1)
-                df_original_close = df_original_close[0:300]
+                df_original_close_full = df_original.filter(like='Close', axis=1)
+
+                # TODO REMOVE ME !!!
+                df_original_close = df_original_close_full.iloc[:, : 1000]
+                # !!! REMOVE ME END!!!
+
+
 
                 if test_setting:
                     df_result_close = df_result_close.iloc[:, 0:number_of_stocks]
@@ -800,13 +806,13 @@ if __name__ == "__main__":  # confirms that the code is under main function
                                                        ,lsuffix=''
                                                        ,rsuffix='')
                 '''
-                df_result_close_buy_price = df_result_close.tail(n_forecast).head(1).transpose()
+                df_result_close_buy_price = df_original_close.tail(n_forecast).head(1).transpose()
                 df_result_close_buy_price = df_result_close_buy_price.rename(columns={df_result_close_buy_price.columns[0]: "buy_price"})
 
-                df_result_close_predicted_price = df_result_close.tail(1).transpose()
+                df_result_close_predicted_price = df_original_close.tail(1).transpose()
                 df_result_close_predicted_price = df_result_close_predicted_price.rename(columns={df_result_close_predicted_price.columns[0]: "predicted_price"})
 
-                df_result_close_sell_price = df_original.head(len(df_original) - n_forecast * (d-1))
+                df_result_close_sell_price = df_original_close.head(len(df_original_close) - n_forecast * (d-1))
                 df_result_close_sell_price = df_result_close_sell_price.tail(1).transpose()
                 df_result_close_sell_price = df_result_close_sell_price.rename(columns={df_result_close_sell_price.columns[0]: "sell_price"})
 
@@ -855,12 +861,13 @@ if __name__ == "__main__":  # confirms that the code is under main function
             plt.box(False)
             for name, group in groups:
                 ax.plot(group.backtest_iteration, group.profit, ms=12,
-                        label='Group ' + str(name), alpha=0.5)
+                        label=str(name), alpha=0.5)
 
-            plt.title('Profits after each backtest')
+            plt.title('Profits per backtest')
             plt.xlabel("Backtest iteration")
             plt.ylabel("Profits generated in the last {v_n_forecast} days".format(v_n_forecast=n_forecast))
             ax.legend(loc='best',  frameon=False)
+            plt.savefig('img/backtest_profits.png')
             plt.show()
 
 
