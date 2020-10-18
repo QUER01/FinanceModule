@@ -25,9 +25,8 @@ from keras.layers import Lambda, Input, Dense
 from keras.models import Model
 from keras.losses import mse, binary_crossentropy
 from keras import backend as K
-
+from keras.utils import plot_model
 import numpy as np
-
 
 
 
@@ -112,6 +111,13 @@ def transformDataset(input_path,input_sep, output_path, output_sep,metadata_inpu
 
 
 def createDataset(df, history_points = 50):
+    #open = 0
+    #high = 1
+    #low = 2
+    #close =3
+    #volume = 4
+    predicted_value_index = 3
+
     # dataset
     data = df.values
     data_normaliser = preprocessing.MinMaxScaler()
@@ -121,10 +127,10 @@ def createDataset(df, history_points = 50):
     ohlcv_histories_normalised = np.array(
         [data_normalised[i:i + history_points].copy() for i in range(len(data_normalised) - history_points)])
     next_day_open_values_normalised = np.array(
-        [data_normalised[:, 0][i + history_points].copy() for i in range(len(data_normalised) - history_points)])
+        [data_normalised[:, predicted_value_index][i + history_points].copy() for i in range(len(data_normalised) - history_points)])
     next_day_open_values_normalised = np.expand_dims(next_day_open_values_normalised, -1)
 
-    next_day_open_values = np.array([data[:, 0][i + history_points].copy() for i in range(len(data) - history_points)])
+    next_day_open_values = np.array([data[:, predicted_value_index][i + history_points].copy() for i in range(len(data) - history_points)])
     next_day_open_values = np.expand_dims(next_day_open_values, -1)
 
     y_normaliser = preprocessing.MinMaxScaler()
@@ -132,7 +138,7 @@ def createDataset(df, history_points = 50):
 
     def calc_ema(values, time_period):
         # https://www.investopedia.com/ask/answers/122314/what-exponential-moving-average-ema-formula-and-how-ema-calculated.asp
-        sma = np.mean(values[:, 3])
+        sma = np.mean(values[:, predicted_value_index])
         ema_values = [sma]
         k = 2 / (1 + time_period)
         for i in range(len(his) - time_period, len(his)):
@@ -143,7 +149,7 @@ def createDataset(df, history_points = 50):
     technical_indicators = []
     for his in ohlcv_histories_normalised:
         # note since we are using his[3] we are taking the SMA of the closing price
-        sma = np.mean(his[:, 3])
+        sma = np.mean(his[:, predicted_value_index])
         macd = calc_ema(his, 12) - calc_ema(his, 26)
         returns = his[:, 3] / shift(his[:,3], 1, cval=np.NaN)
         returns = returns[-1]
@@ -262,9 +268,11 @@ def stock_forceasting(i, column, df_filtered, timeseries_evaluation, timeseries_
             #print('-' * 25 + 'Scaled MSE: ' + str(scaled_mse))
             #scaled_mse_arr.append([d, column, scaled_mse])
 
-            # TODO: change name to df_mase
-            df_scaled_mse = pd.DataFrame(data=metrics['mase'], columns=['backtest_iteration', 'ticker', 'scaled mse'])
-            df_scaled_mse.to_csv('data/intermediary/df_scaled_mse_' + str(d) + '_' + column + '.csv', sep=';')
+
+            metric = 'mape'
+            df_metric = pd.DataFrame.from_dict(metrics)
+            df_metric_transposed = df_metric.transpose()
+            df_metric.to_csv('data/intermediary/df_metric_' + str(d) + '_' + column + '.csv', sep=';')
 
             if plot_results:
                 # plot the results
@@ -283,7 +291,7 @@ def stock_forceasting(i, column, df_filtered, timeseries_evaluation, timeseries_
                 pred = ax1.plot(y_predicted[start:end], label='predicted')
 
                 # set title
-                fig.suptitle('Stock price [{stock}] over time. [MASE = {mase}]'.format(stock=column, mase = str(round(metrics['mase'],2))),  fontsize=fontsize)
+                fig.suptitle('Stock price [{stock}] over time. [{metric_name} = {metric_value}]'.format(stock=column,metric_name =metric, metric_value = str(round(df_metric[metric],2))),  fontsize=fontsize)
 
                 # removing all borders
                 ax1.spines['top'].set_visible(False)
@@ -582,7 +590,7 @@ def getReconstructionErrorsDF(df_pct_change, reconstructed_data):
     df = df.set_index('stock_name')
     return df
 
-def getLatentFeaturesSimilariryDF(df_pct_change, latent_features):
+def getLatentFeaturesSimilariryDF(df_pct_change, latent_features, sorted = True):
     stocks_latent_feature = []
     array = []
     num_columns = latent_features.shape[0]
@@ -606,7 +614,10 @@ def getLatentFeaturesSimilariryDF(df_pct_change, latent_features):
                ,'stock_name']
     df = pd.DataFrame(stocks_latent_feature, columns=columns)
     df = df.set_index('stock_name')
-    return df.sort_values(by=['similarity_score'], ascending=True)
+
+    if sorted == True:
+        df = df.sort_values(by=['similarity_score'], ascending=True)
+    return df
 
 
 
@@ -679,8 +690,13 @@ def calcMarkowitzPortfolio(df, budget, S,target = None, type = 'max_sharpe', fre
     if cov_type == 'adjusted':
         S_unadjusted = risk_models.sample_cov(df)
         ef = EfficientFrontier(expected_returns=mu, cov_matrix = S, cov_matrix_unadjusted = S_unadjusted, cov_type = cov_type)
+    if cov_type == 'ledoit_wolf':
+        cs = risk_models.CovarianceShrinkage(df, frequency=252)
+        S = cs.ledoit_wolf(shrinkage_target='constant_variance')
+        ef = EfficientFrontier(expected_returns=mu, cov_matrix=S)
     else:
         ef = EfficientFrontier(expected_returns=mu, cov_matrix = S)
+
 
     if type == 'efficient_return':
         weights = ef.efficient_return(target_return=target)
@@ -803,3 +819,46 @@ def append_to_portfolio_results(array, d, portfolio_type, discrete_allocation, r
         }
     )
     return array
+
+
+def plot_backtest_results(df, column, colors):
+    '''
+    plt.rcParams["figure.figsize"] = [16, 9]
+    df = df.pivot_table(column, index='backtest_iteration', columns='portfolio_type')
+    df = df.sort_values(by=['backtest_iteration'], ascending=False)
+    ax = df.plot.bar(rot=0,ylabel= column )
+    plt.savefig('img/backtest_results_{i}.png'.format(i=str(column)))
+    '''
+
+    # set width of bar
+    barWidth = 0.25
+
+    df = df.pivot_table(column, index='backtest_iteration', columns='portfolio_type')
+    df = df.sort_values(by=['backtest_iteration'], ascending=False)
+
+    plt.figure(figsize=(18, 7))
+    plt.box(False)
+    # set height of bar
+    bars1 = df.iloc[:, 0].values
+    bars2 = df.iloc[:, 1].values
+    bars3 = df.iloc[:, 2].values
+
+    # Set position of bar on X axis
+    r1 = np.arange(len(bars1))
+    r2 = [x + barWidth for x in r1]
+    r3 = [x + barWidth for x in r2]
+
+    # Make the plot
+    plt.bar(r1, bars1, color=colors[0], width=barWidth, edgecolor='white', label=df.columns[0])
+    plt.bar(r2, bars2, color=colors[1], width=barWidth, edgecolor='white', label=df.columns[1])
+    plt.bar(r3, bars3, color=colors[2], width=barWidth, edgecolor='white', label=df.columns[2])
+
+    # Add xticks on the middle of the group bars
+    plt.xlabel('backtest iterations', fontweight='bold')
+    plt.xticks([r + barWidth for r in range(len(bars1))], df.index)
+
+    # Create legend & Show graphic
+    plt.legend()
+    plt.title('Backtest results - {}'.format(column))
+    plt.savefig('img/backtest_results_{i}.png'.format(i=str(column)))
+    plt.close()
