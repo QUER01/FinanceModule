@@ -13,6 +13,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
     from datetime import datetime
     from multiprocessing import Pool
     import multiprocessing
+    from pandas.plotting import register_matplotlib_converters
+    register_matplotlib_converters()
 
     warnings.filterwarnings("error")
     os.environ["PATH"] += os.pathsep + 'lib/Graphviz2.38/bin/'
@@ -26,7 +28,12 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
     # indicate folder to save, plus other options
     date = datetime.now().strftime('%Y-%m-%d_%H_%M')
-    tensorboard = TensorBoard(log_dir='./logs/run_' + date)
+    tensorboard = TensorBoard(log_dir='./logs/run_' + date
+                              ,histogram_freq=0
+                              ,write_graph=True
+                              ,write_images=False
+                              ,embeddings_freq=0
+                              ,embeddings_metadata=None)
     # save it in your callback list, where you can include other callbacks
     callbacks_list = [tensorboard]
 
@@ -368,6 +375,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                     # the smaller the value, the closer the stocks are related
                     df_similarity_delta = calc_delta_matrix(df_similarity['similarity_score'].transpose())
                     df_similarity_cov = df_latent_feature.cov()
+                    df_similarity_corr = df_latent_feature.corr()
 
                     # normalize between 0 and 1
                     min = np.min(df_similarity_cov)
@@ -375,10 +383,11 @@ if __name__ == "__main__":  # confirms that the code is under main function
                     df_similarity_cov_normalized = (df_similarity_cov - min) / ( max-min)
 
 
-                    # calculate covariance matrix of stocks
+                    # calculate covariance and correlation matrix of stocks
                     df_pct_change_cov = df_pct_change.cov()
+                    df_pct_change_corr = df_pct_change.corr()
 
-                    '''
+
                     # plots for 1. Selection of least volatile stocks using autoencoder latent feature value
                     if plot_results:
                         stable_stocks = False
@@ -391,7 +400,14 @@ if __name__ == "__main__":  # confirms that the code is under main function
                         df_stable_stocks = df_recreation_error.sort_values(by=['recreation_error'], ascending=True).head(number_of_stable_unstable_stocks)
                         df_stable_stocks['recreation_error_class'] =  'top ' + str(number_of_stable_unstable_stocks)
                         l_stable_stocks = np.array(df_stable_stocks.head(number_of_stable_unstable_stocks).index)
-    
+
+                        df_unstable_stocks = df_recreation_error.sort_values(by=['recreation_error'], ascending=False).head(number_of_stable_unstable_stocks)
+                        df_unstable_stocks['recreation_error_class'] = 'bottom ' + str(number_of_stable_unstable_stocks)
+                        print(df_unstable_stocks.head(5))
+                        l_unstable_stocks = np.array(df_unstable_stocks.head(number_of_stable_unstable_stocks).index)
+
+
+                        '''
                         plt.figure(figsize=(11, 6))
                         plt.box(False)
                         for stock in df_stable_stocks.index:
@@ -402,13 +418,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
                         plt.xlabel("Dates")
                         plt.ylabel("Returns")
                         plt.show()
+
     
-    
-    
-                        df_unstable_stocks = df_recreation_error.sort_values(by=['recreation_error'], ascending=False).head(number_of_stable_unstable_stocks)
-                        df_unstable_stocks['recreation_error_class'] = 'bottom ' + str(number_of_stable_unstable_stocks)
-                        print(df_unstable_stocks.head(5))
-                        l_unstable_stocks = np.array(df_unstable_stocks.head(number_of_stable_unstable_stocks).index)
     
                         # plot unstable stocks
                         plt.figure(figsize=(11, 6))
@@ -421,7 +432,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
                         plt.xlabel("Dates")
                         plt.ylabel("Returns")
                         plt.show()
-    
+                        '''
+
                         if stable_stocks:
                             print('Plotting stable stocks')
                             list = l_stable_stocks
@@ -432,7 +444,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                             list = l_unstable_stocks
                             title = 'Original versus autoencoded stock price for high recreation error (unstable stocks)'
     
-    
+                        '''
                         plt.figure()
                         plt.rcParams["figure.figsize"] = (8, 14)
                         plt.title(title, y=1.08)
@@ -476,7 +488,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
                         plt.xticks(fontsize=fontsize)
                         plt.yticks(fontsize=fontsize)
                         plt.show()
-    
+                        '''
+
                         # Plots for 3. Calculating stock risk for portfolio diversification
                         least_similar_stocks = False
                         most_similar_stocks = True
@@ -484,7 +497,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                         example_stock_names = df_pct_change.columns  # 'AMZN'
                         for example_stock_name in example_stock_names[0:30]:
     
-                            example_stock_name =  'GOOGL' #'MSFT'#'AAPL'#'AMZN' #
+                            example_stock_name =  'GOOG' #'GOOGL' #'MSFT'#'AAPL'#'AMZN' #
                             top_n = 10
     
                             df_pct_change_corr_most_example = df_pct_change_corr[[example_stock_name]].sort_values(
@@ -492,10 +505,10 @@ if __name__ == "__main__":  # confirms that the code is under main function
                             df_pct_change_corr_least_example = df_pct_change_corr[[example_stock_name]].sort_values(
                                 by=[example_stock_name], ascending=False).tail(top_n)
     
-                            df_similarity_most_example = df_similarity_cor[[example_stock_name]].sort_values(
+                            df_similarity_most_example = df_similarity_corr[[example_stock_name]].sort_values(
                                 by=[example_stock_name],
                                 ascending=False).head(top_n)
-                            df_similarity_least_example = df_similarity_cor[[example_stock_name]].sort_values(
+                            df_similarity_least_example = df_similarity_corr[[example_stock_name]].sort_values(
                                 by=[example_stock_name],
                                 ascending=False).tail(top_n)
     
@@ -511,14 +524,15 @@ if __name__ == "__main__":  # confirms that the code is under main function
     
     
                             # Plot original series for comparison
+                            df_plot = df_result_close.tail(50)
                             plt.figure()
-                            plt.rcParams["figure.figsize"] = (18, 10)
+                            plt.rcParams["figure.figsize"] = (30, 12)
                             plt.box(False)
                             fig, ((ax1, ax2),(ax3, ax4 ), (ax5,ax6)) = plt.subplots(3, 2)
                             #fig.tight_layout(pad=10.0)
                             fig.suptitle('Baseline stock: ' + example_stock_name + ' compared to least (left) and most (right) related stocks', y=1)
     
-                            ax1.plot(df_result_close.index, df_result_close[example_stock_name], label=example_stock_name)
+                            ax1.plot(df_plot.index, df_plot[example_stock_name], label=example_stock_name)
                             ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                             # removing all borders
                             ax1.spines['top'].set_visible(False)
@@ -526,7 +540,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                             ax1.spines['left'].set_visible(False)
                             ax1.spines['bottom'].set_visible(False)
     
-                            ax3.plot(df_result_close.index, df_result_close[least_stock_cv], label=least_stock_cv + '(covariance)')
+                            ax3.plot(df_plot.index, df_plot[least_stock_cv], label=least_stock_cv + '(covariance)')
                             ax3.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                             # removing all borders
                             ax3.spines['top'].set_visible(False)
@@ -534,7 +548,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                             ax3.spines['left'].set_visible(False)
                             ax3.spines['bottom'].set_visible(False)
     
-                            ax5.plot(df_result_close.index, df_result_close[least_stock_ae], label=least_stock_ae + '(latent feature)')
+                            ax5.plot(df_plot.index, df_plot[least_stock_ae], label=least_stock_ae + '(latent feature)')
                             ax5.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                             # removing all borders
                             ax5.spines['top'].set_visible(False)
@@ -542,7 +556,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                             ax5.spines['left'].set_visible(False)
                             ax5.spines['bottom'].set_visible(False)
     
-                            ax2.plot(df_result_close.index, df_result_close[example_stock_name], label=example_stock_name)
+                            ax2.plot(df_plot.index, df_plot[example_stock_name], label=example_stock_name)
                             ax2.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                             # removing all borders
                             ax2.spines['top'].set_visible(False)
@@ -550,7 +564,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                             ax2.spines['left'].set_visible(False)
                             ax2.spines['bottom'].set_visible(False)
     
-                            ax4.plot(df_result_close.index, df_result_close[most_stock_cv],
+                            ax4.plot(df_plot.index, df_plot[most_stock_cv],
                                      label=most_stock_cv + '(covariance)')
                             ax4.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                             # removing all borders
@@ -559,7 +573,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                             ax4.spines['left'].set_visible(False)
                             ax4.spines['bottom'].set_visible(False)
     
-                            ax6.plot(df_result_close.index, df_result_close[most_stock_ae],
+                            ax6.plot(df_plot.index, df_plot[most_stock_ae],
                                      label=most_stock_ae + '(latent feature)')
                             ax6.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
                             # removing all borders
@@ -570,10 +584,10 @@ if __name__ == "__main__":  # confirms that the code is under main function
     
                             plt.xlabel("Dates")
                             plt.ylabel("Stock Value")
-                            plt.show()
-    
-    
-    
+                            plt.savefig('img/{v_d}_similarity_comparision_stock_{v_stock}.png'.format(v_d=d, v_stock =example_stock_name))
+
+
+                          '''
                             # Plots for 3. compare original timeseries with latent features
                             plt.figure()
                             plt.rcParams["figure.figsize"] = (18, 10)
@@ -602,10 +616,8 @@ if __name__ == "__main__":  # confirms that the code is under main function
         
                             plt.xlabel("Dates")
                             plt.ylabel("Stock Value")
-                            plt.show()
-                       
-    
-                '''
+                        '''
+
 
                     # -------------------------------------------------------
                     #           Step3: Markowitz Model
@@ -812,60 +824,111 @@ if __name__ == "__main__":  # confirms that the code is under main function
                 except:
                     print('file does not exists')
 
-                df_results_portfolio.to_csv('df_backtest_portfolio.csv', sep=';',
-                                            columns=df_results_portfolio_temp.columns)
+df_results_portfolio.to_csv('df_backtest_portfolio.csv', sep=';',
+                            columns=df_results_portfolio_temp.columns)
 
 
-                df_results_portfolio_used = pd.read_csv('df_backtest_portfolio.csv', sep=';')
-                df_results_portfolio_used = df_results_portfolio_used[df_results_portfolio_temp.columns]
-                df_results_portfolio_used = df_results_portfolio_used[df_results_portfolio_used['portfolio_type'] != 'markowitz_portfolio_without_forecast_without_preselection' ]
-                df_results_portfolio_used = df_results_portfolio_used[df_results_portfolio_used['portfolio_type'] != 'markowitz_portfolio_with_forecast_and adjusted covariance_matrix']
+df_results_portfolio_used = pd.read_csv('df_backtest_portfolio.csv', sep=';')
+#df_results_portfolio_used = df_results_portfolio_used[df_results_portfolio_temp.columns]
+df_results_portfolio_used = df_results_portfolio_used[df_results_portfolio_used['portfolio_type'] != 'markowitz_portfolio_without_forecast_without_preselection' ]
+df_results_portfolio_used = df_results_portfolio_used[df_results_portfolio_used['portfolio_type'] != 'markowitz_portfolio_with_forecast_and adjusted covariance_matrix']
 
-                volatility_10 = []
-                volatility_252 = []
-                for backtest in df_results_portfolio_used['backtest_iteration'].unique():
-                    print('Calculating portfolio annual volatility for backtest {v_backtest}'.format(v_backtest =str(backtest)))
-                    df_original_backtest = df_original_close_full.head(len(df_original_close_full) - n_forecast * (backtest - 1))
-                    for portfolio_type in df_results_portfolio_used['portfolio_type'].unique():
-                        selected_stocks = \
-                        df_results_portfolio_used[(df_results_portfolio_used['backtest_iteration'] == backtest)
-                                                  & (df_results_portfolio_used['portfolio_type'] == portfolio_type)][
-                            'discrete_allocation'].values
+df_results_portfolio_used = df_results_portfolio_used.reset_index()
 
-                        selected_stocks_json = json.loads(selected_stocks[0].replace("\'", "\""))
-                        stocks = []
-                        weights = []
-                        for stock in selected_stocks_json:
-                            stocks.append(stock)
-                            weights.append(selected_stocks_json[stock])
+volatility_10 = []
+volatility_252 = []
+for backtest in df_results_portfolio_used['backtest_iteration'].unique():
+    print('Calculating portfolio annual volatility for backtest {v_backtest}'.format(v_backtest =str(backtest)))
+    df_original_backtest = df_original_close_full.head(len(df_original_close_full) - n_forecast * (backtest - 1))
+    for portfolio_type in df_results_portfolio_used['portfolio_type'].unique():
+        selected_stocks = \
+        df_results_portfolio_used[(df_results_portfolio_used['backtest_iteration'] == backtest)
+                                  & (df_results_portfolio_used['portfolio_type'] == portfolio_type)][
+            'discrete_allocation'].values
 
-                        weights = weights / np.sum(weights)
-                        data = df_original_backtest[stocks]
-                        log_returns = data.pct_change()
-                        portfolio_vol_252 = np.sqrt(np.dot(weights.T, np.dot(log_returns.cov() * 252, weights)))
-                        portfolio_vol_10 = np.sqrt(np.dot(weights.T, np.dot(log_returns.cov() * 10, weights)))
-                        volatility_252.append(portfolio_vol_252)
-                        volatility_10.append(portfolio_vol_10)
-
-                df_volatility = pd.DataFrame(volatility_252, columns=['portfolio_volatility_252'])
-                df_volatility['portfolio_volatility_10'] = volatility_10
-                df_results_portfolio_used_with_volatility = df_results_portfolio_used.join(df_volatility, how='left')
-                df_results_portfolio_used_with_volatility['cumsum_profit'] = df_results_portfolio_used_with_volatility.groupby('portfolio_type')['profit'].cumsum()
-                df_results_portfolio_used_with_volatility['10_expected_return'] = df_results_portfolio_used_with_volatility['profit']/budget
-                df_results_portfolio_used_with_volatility['sharpe_ratio_10'] = df_results_portfolio_used_with_volatility['10_expected_return']\
-                                                                               /df_results_portfolio_used_with_volatility['portfolio_volatility_10']
-
-                # Plot
-                colors = ['#2195ca' ,'#c1c1c1','#f9c77d'] # blue, grey, yellow
-                plot_backtest_results(df_results_portfolio_used_with_volatility, column='profit',  colors =  colors)
-                plot_backtest_results(df_results_portfolio_used_with_volatility, column='cumsum_profit',  colors =  colors)
-                #plot_backtest_results(df_results_portfolio_used_with_volatility, column='portfolio_volatility_10',  colors =  colors)
-                #plot_backtest_results(df_results_portfolio_used_with_volatility, column='portfolio_volatility_252',  colors =  colors)
-                plot_backtest_results(df_results_portfolio_used_with_volatility, column='expected_annual_return',  colors =  colors)
-                #plot_backtest_results(df_results_portfolio_used_with_volatility, column='sharpe_ratio_10',  colors =  colors)
-                plot_backtest_results(df_results_portfolio_used_with_volatility, column='sharpe_ratio',  colors =  colors)
-                plot_backtest_results(df_results_portfolio_used_with_volatility, column='annual_volatility',  colors =  colors)
+        selected_stocks_json = json.loads(selected_stocks[0].replace("\'", "\""))
+        stocks = []
+        weights = []
+        for stock in selected_stocks_json:
+            stocks.append(stock)
+            weights.append(selected_stocks_json[stock])
 
 
+        weights = weights / np.sum(weights)
+        try:
+            data = df_original_backtest[stocks]
+            #print(data.shape)
+        except:
+            print("Some of these stocks are not in the dataset: {b}_{s}".format(b=str(backtest), s=str(stocks)))
 
+        log_returns = data.pct_change()
+        portfolio_vol_252 = np.sqrt(np.dot(weights.T, np.dot(log_returns.tail(252 ).cov() * 252, weights)))
+        portfolio_vol_10 = np.sqrt(np.dot(weights.T, np.dot(log_returns.tail(10 ).cov() * 10, weights)))
+        print(portfolio_vol_10)
+        volatility_252.append(portfolio_vol_252)
+        volatility_10.append(portfolio_vol_10)
+
+df_volatility = pd.DataFrame(volatility_252, columns=['portfolio_volatility_252'])
+df_volatility['portfolio_volatility_10'] = volatility_10
+df_results_portfolio_used_with_volatility = df_results_portfolio_used.join(df_volatility, how='left')
+df_results_portfolio_used_with_volatility['cumsum_profit'] = df_results_portfolio_used_with_volatility.groupby('portfolio_type')['profit'].cumsum()
+df_results_portfolio_used_with_volatility['10_expected_return'] = df_results_portfolio_used_with_volatility['profit']/budget
+df_results_portfolio_used_with_volatility['sharpe_ratio_10'] = df_results_portfolio_used_with_volatility['10_expected_return']\
+                                                               /df_results_portfolio_used_with_volatility['portfolio_volatility_10']
+
+# Plot
+colors = ['#2195ca' ,'#c1c1c1','#f9c77d'] # blue, grey, yellow
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='profit',  colors =  colors, title = 'Out-of sample - profit')
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='cumsum_profit',  colors =  colors, title = 'Out-of sample - cummulative profit')
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='portfolio_volatility_10',  colors =  colors, title = 'Out-of sample - volatility of last 10 days')
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='10_expected_return',  colors =  colors, title = 'Out-of sample - returns of last 10 days')
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='sharpe_ratio_10',  colors =  colors, title = 'Out-of sample - sharpe ratio of last 10 days' )
+
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='expected_annual_return',  colors =  colors, title = 'In sample - expected annual return')
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='sharpe_ratio',  colors =  colors , title = 'In sample - sharpe ratio')
+plot_backtest_results(df_results_portfolio_used_with_volatility, column='annual_volatility',  colors =  colors, title = 'In sample - annual volatility')
+
+plt.close('all')
+
+df = df_results_portfolio_used_with_volatility
+df_stock_allocation = pd.read_json(json.dumps(json.loads(df['discrete_allocation'].iloc[0,].replace("\'", "\""))), orient='index')
+df_stock_allocation.columns = ["{d}_{type}".format(d=df_results_portfolio_used_with_volatility['backtest_iteration'].iloc[0], type=df_results_portfolio_used_with_volatility['portfolio_type'].iloc[0])]
+
+for index, df_stocks in df[1:len(df)].iterrows():
+    stocks = df_stocks['discrete_allocation']
+    backtest = str(df_stocks['backtest_iteration'])
+    type = str(df_stocks['portfolio_type'])
+    df_temp = pd.read_json(json.dumps(json.loads(stocks.replace("\'", "\""))), orient='index')
+    df_temp.columns = ["{d}_{type}".format(d = backtest, type =type) ]
+    df_stock_allocation = df_stock_allocation.join(df_temp, how='outer')
+
+
+#df_stock_allocation = df_stock_allocation.fillna(0)
+#df_stock_allocation = df_stock_allocation.drop('ADXS')
+#df_stock_allocation = df_stock_allocation.drop('ICON')
+
+stock = df_stock_allocation.index
+backtest = df_stock_allocation.columns
+value = np.array(df_stock_allocation.transpose())
+
+plt.figure()
+plt.rcParams["figure.figsize"] = (40, 20)
+fig, ax = plt.subplots()
+im = ax.imshow(value)
+
+# We want to show all ticks...
+ax.set_xticks(np.arange(len(stock)))
+ax.set_yticks(np.arange(len(backtest)))
+# ... and label them with the respective list entries
+ax.set_xticklabels(stock)
+ax.set_yticklabels(backtest)
+
+# Rotate the tick labels and set their alignment.
+plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+     rotation_mode="anchor")
+cbar = fig.colorbar(im)
+
+
+ax.set_title("Selected Stocks in each backtest iteration")
+plt.savefig('img/selected_stocks_heatmap_{}.png'.format(type), dpi=300)
 

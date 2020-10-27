@@ -809,7 +809,7 @@ def append_to_portfolio_results(array, d, portfolio_type, discrete_allocation, r
     return array
 
 
-def plot_backtest_results(df, column, colors):
+def plot_backtest_results(df, column, colors, title):
     '''
     plt.rcParams["figure.figsize"] = [16, 9]
     df = df.pivot_table(column, index='backtest_iteration', columns='portfolio_type')
@@ -824,7 +824,7 @@ def plot_backtest_results(df, column, colors):
     df = df.pivot_table(column, index='backtest_iteration', columns='portfolio_type')
     df = df.sort_values(by=['backtest_iteration'], ascending=False)
 
-    plt.figure(figsize=(18, 7))
+    plt.figure(figsize=(12, 7))
     plt.box(False)
     # set height of bar
     bars1 = df.iloc[:, 0].values
@@ -846,7 +846,7 @@ def plot_backtest_results(df, column, colors):
     plt.xticks([r + barWidth for r in range(len(bars1))], df.index)
 
     # Create legend & Show graphic
-    plt.legend()
-    plt.title('Backtest results - {}'.format(column))
+    plt.legend(frameon=False)
+    plt.title(title)
     plt.savefig('img/backtest_results_{i}.png'.format(i=str(column)))
     plt.close()
