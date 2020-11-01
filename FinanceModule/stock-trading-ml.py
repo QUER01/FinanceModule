@@ -68,7 +68,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
     hidden_layers = 5
     batch_size = 500
     epochs = 500
-    stock_selection_number = 500
+    stock_selection_number = 1000
 
     # 2. Forecasting using recurrent neural networks
     backtest_days = 200
@@ -249,8 +249,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                     # get backtest iteration dataset with forecasted values
                     df_result = pd.read_csv('data/df_result_' + str(d) + '.csv', sep=';', index_col='Unnamed: 0',
                                             parse_dates=True)
-
-                    ## Deep Portfolio
+                   ## Deep Portfolio
                     print('-' * 15 + 'PART IV: Autoencoder Deep Portfolio Optimization')
                     print('-' * 20 + 'Create dataset')
                     df_result_close = df_result.filter(like='Close', axis=1)
@@ -264,6 +263,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
                     [new_columns.append(c.split('_')[0]) for c in df_original_close_full.columns ]
                     df_original_close_full.columns = new_columns
                     df_original_close = df_original_close_full.iloc[:, :number_of_stocks]
+
 
                     print('-' * 20 + 'Data Cleaning: Check if all values are positive')
                     try:
@@ -292,6 +292,12 @@ if __name__ == "__main__":  # confirms that the code is under main function
                     df_pct_change_original = df_pct_change_original.fillna(method='ffill')
                     # the percentage change function will make the first two rows equal to nan
                     df_pct_change_original = df_pct_change_original.tail(len(df_pct_change_original) - 2)
+
+                    df_pct_change_original_full = df_original_close_full.pct_change(1).astype(float)
+                    df_pct_change_original_full = df_pct_change_original_full.replace([np.inf, -np.inf], np.nan)
+                    df_pct_change_original_full = df_pct_change_original_full.fillna(method='ffill')
+                    # the percentage change function will make the first two rows equal to nan
+                    df_pct_change_original_full = df_pct_change_original_full.tail(len(df_pct_change_original_full) - 2)
 
                     # -------------------------------------------------------
                     #           Step2: Variational Autoencoder Model
@@ -616,7 +622,7 @@ if __name__ == "__main__":  # confirms that the code is under main function
         
                             plt.xlabel("Dates")
                             plt.ylabel("Stock Value")
-                        '''
+                            '''
 
 
                     # -------------------------------------------------------
@@ -628,7 +634,28 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
                     print('-' * 20 + 'Step 3: Markowitz model without forecast values and without preselection')
                     discrete_allocation, discrete_leftover, weights, cleaned_weights, mu, S, results = calcMarkowitzPortfolio(
-                          df=df_original_close.head(len(df_original_close) - n_forecast * d)
+                          df=df_original_close_full.head(len(df_original_close_full) - n_forecast * d)
+                        , budget=budget
+                        , S=df_pct_change_original_full.cov()
+                        , type='max_sharpe'
+                        , target=target_annual_return)
+
+                    df_markowitz_allocation_without_forecast_without_preseletcion_full = pd.DataFrame(
+                        discrete_allocation.items(),
+                        columns=['stock_name', 'bought_volume_without_forecast_without_preselection'])
+                    df_markowitz_allocation_without_forecast_without_preseletcion_full = df_markowitz_allocation_without_forecast_without_preseletcion_full.set_index(
+                        'stock_name')
+
+                    append_to_portfolio_results(array=portfolio_results_temp,
+                                                d=d,
+                                                portfolio_type='markowitz_portfolio_baseline_full',
+                                                discrete_allocation=discrete_allocation,
+                                                results=results)
+
+
+                    print('-' * 20 + 'Step 3: Markowitz model without forecast values and without preselection')
+                    discrete_allocation, discrete_leftover, weights, cleaned_weights, mu, S, results = calcMarkowitzPortfolio(
+                        df=df_original_close.head(len(df_original_close) - n_forecast * d)
                         , budget=budget
                         , S=df_pct_change_original.cov()
                         , type='max_sharpe'
@@ -642,9 +669,23 @@ if __name__ == "__main__":  # confirms that the code is under main function
 
                     append_to_portfolio_results(array=portfolio_results_temp,
                                                 d=d,
-                                                portfolio_type='markowitz_portfolio_without_forecast_without_preselection',
+                                                portfolio_type='markowitz_portfolio_baseline',
                                                 discrete_allocation=discrete_allocation,
                                                 results=results)
+
+                    df_temp = df_markowitz_allocation_without_forecast_without_preseletcion_full.join(df_markowitz_allocation_without_forecast_without_preseletcion, lsuffix='l')
+                    df_temp['delta'] = df_temp.iloc[:,0] - df_temp.iloc[:,1]
+
+                    print('Identical stocks')
+                    print(df_temp['delta'][df_temp['delta'] == 0].count())
+
+                    print('number of stocks selected in smaller dataset not in full dataset')
+                    print(df_temp['delta'][df_temp['delta'] < 0].count())
+
+                    print('number of stocks selected in full dataset not in small dataset')
+                    print(df_temp['delta'][df_temp['delta'] > 0].count())
+
+
 
                     print('-' * 20 + 'Step 3: Markowitz model without forecast values')
                     discrete_allocation, discrete_leftover, weights, cleaned_weights, mu, S, results = calcMarkowitzPortfolio(
