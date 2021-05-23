@@ -15,7 +15,7 @@ from lib.pypfopt_055.discrete_allocation import DiscreteAllocation, get_latest_p
 import matplotlib.pyplot as plt
 
 from termcolor import colored
-from FinanceModule.util_forecasting_metrics import *
+from src.util_forecasting_metrics import *
 from pandas.tseries.offsets import DateOffset
 import gc
 
@@ -1027,22 +1027,13 @@ def plot_backtest_results(df, column, colors, title, run_id):
 
 def portfolio_selection(d, stock_selection_number, n_forecast, callbacks_list, epochs, verbose, batch_size,
                         plot_results, run_id):
-    '''
+
     import numpy as np
     import matplotlib.pyplot as plt
-
-    from FinanceModule.util import defineVariationalAutoencoder \
-        , getReconstructionErrorsDF \
-        , Model \
-        , defineAutoencoder \
-        , getLatentFeaturesSimilariryDF \
-        , calc_delta_matrix \
-        , calcMarkowitzPortfolio, \
-        append_to_portfolio_results
-
     import pandas as pd
     from sklearn import preprocessing
-    '''
+
+
 
     portfolio_results = []
     markowitz_allocation = []
@@ -1057,7 +1048,7 @@ def portfolio_selection(d, stock_selection_number, n_forecast, callbacks_list, e
 
     # get full dataset
     df_original = pd.read_csv(
-        'data/{v_run_id}/historical_stock_prices_original_etf.csv'.format(v_run_id=run_id, v_d=str(d)), sep=';')
+        'data/{v_run_id}/historical_stock_prices_original.csv'.format(v_run_id=run_id, v_d=str(d)), sep=';')
     df_original.index = pd.to_datetime(df_original.date)
 
     # get backtest iteration dataset with forecasted values
@@ -1069,6 +1060,7 @@ def portfolio_selection(d, stock_selection_number, n_forecast, callbacks_list, e
     print('-' * 20 + 'Create dataset')
     df_result_close = df_result.filter(like='Close', axis=1)
     df_original_close_full = df_original.filter(like='Close', axis=1)
+
 
     new_columns = []
     [new_columns.append(c.split('_')[0]) for c in df_result_close.columns]
@@ -1117,6 +1109,7 @@ def portfolio_selection(d, stock_selection_number, n_forecast, callbacks_list, e
     # -------------------------------------------------------
     #           Step2: Variational Autoencoder Model
     # -------------------------------------------------------
+
     print('-' * 25 + 'Apply MinMax Scaler')
     df_scaler = preprocessing.MinMaxScaler()
     df_pct_change_normalised = df_scaler.fit_transform(df_pct_change)
@@ -1176,7 +1169,7 @@ def portfolio_selection(d, stock_selection_number, n_forecast, callbacks_list, e
                               shuffle=False, epochs=epochs, batch_size=batch_size, verbose=verbose)
 
     # Get the latent feature vector
-    print('-' * 25 + 'Get the latent feature vector')
+    print('-' * 25  + 'Get the latent feature vector')
     autoencoderTransposedLatent = Model(inputs=autoencoderTransposed.input,
                                         outputs=autoencoderTransposed.get_layer('Encoder_Input').output)
     # plot_model(autoencoderTransposedLatent, to_file='img/model_autoencoder_2.png', show_shapes=True,
@@ -1185,6 +1178,7 @@ def portfolio_selection(d, stock_selection_number, n_forecast, callbacks_list, e
     # predict autoencoder model
     print('-' * 25 + 'Predict autoencoder model')
     latent_features = autoencoderTransposedLatent.predict(df_pct_change_transposed_normalised)
+
 
     print('-' * 25 + 'Calculate L2 norm as similarity metric')
     df_similarity = getLatentFeaturesSimilariryDF(df_pct_change=df_latent_feature_input
@@ -1269,7 +1263,7 @@ def portfolio_selection(d, stock_selection_number, n_forecast, callbacks_list, e
         plt.title(title, y=1.08)
         plt.box(False)
         fig, ax = plt.subplots(len(list), 1)
-
+        
         i = 0
         for stock in list:
             which_stock = df_result_close.columns.get_loc(stock)
