@@ -21,7 +21,7 @@ html5lib==0.9999999
 idna==2.8
 inflection==0.3.1
 intel-openmp==2019.0
-joblib==0.14.1
+joblib==1.2.0
 Keras==2.0.8
 Keras-Applications==1.0.8
 Keras-Preprocessing==1.0.9
